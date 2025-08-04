@@ -16,6 +16,26 @@
 - Aims for **transparent, customizable** modeling workflows for researchers and applied data scientists.
 
 ---
+## 📦 Models
+
+✅ Implemented Models
+| Model Name      | Engine | Type       | Description                                             |
+| --------------- | ------ | ---------- | ------------------------------------------------------- |
+| `causal_forest` | `grf`  | Regression | Estimates CATEs using generalized random forests (GRF). |
+
+🧪 Planned Models
+| Model Name            | Engine   | Type           | Notes                                                                    |
+| --------------------- | -------- | -------------- | ------------------------------------------------------------------------ |
+| `bart_causal`         | `dbarts` | Regression     | Bayesian Additive Regression Trees for treatment effect estimation.      |
+| `x_learner`           | internal | Meta-learner   | Decomposes effect estimation into separate models for treatment/control. |
+| `t_learner`           | internal | Meta-learner   | Separate models for treatment and control groups.                        |
+| `s_learner`           | internal | Meta-learner   | Single model with treatment as covariate.                                |
+| `dr_learner`          | internal | Doubly robust  | Combines outcome modeling and propensity score modeling.                 |
+| `instrumental_forest` | `grf`    | IV Regression  | For estimating local average treatment effects with instruments.         |
+| `uplift_tree`         | TBD      | Classification | Uplift modeling for binary outcomes and marketing campaigns.             |
+| `causal_boosting`     | TBD      | Regression     | Boosted versions of causal models.                                       |
+| `meta_stack`          | `stacks` | Ensemble       | Stacking multiple causal models.                                         |
+
 
 ## 🚀 Installation
 
