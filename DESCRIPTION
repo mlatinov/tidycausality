@@ -1,0 +1,21 @@
+Package: tidycausality
+Title: Causal Inference Modeling with Parsnip
+Version: 0.0.0.9000
+Authors@R: 
+    person("Metodi", "Latinov", email = "metodilatinov@abv.bg", role = c("aut", "cre"))
+Description: A wrapper for causal machine learning models integrated into the 'parsnip' modeling framework, allowing tidy workflows, tuning, and evaluation.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.2
+Imports:
+    parsnip,
+    dials,
+    tune,
+    workflows,
+    hardhat,
+    grf,
+    rlang
+Suggests: 
+    testthat (>= 3.0.0)
+Config/testthat/edition: 3
