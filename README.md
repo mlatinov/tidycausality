@@ -2,6 +2,8 @@
 
 [![Build Status](https://github.com/mlatinov/tidycausality/actions/workflows/R-CMD-check.yaml/badge.svg)](https://github.com/mlatinov/tidycausality/actions)
 
+![tidycausality badge](https://raw.githubusercontent.com/mlatinov/tidycausality/main/inst/badges/tidycausality-badge.png)
+
 **tidycausality** is a development-stage R package for causal machine learning, built for seamless integration with the **tidymodels** ecosystem. It provides a unified, extensible framework for estimating treatment effects using modern ML techniques — starting with **causal forests**.
 
 ---
