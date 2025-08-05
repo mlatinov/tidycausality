@@ -1,0 +1,50 @@
+starting worker pid=54424 on localhost:11084 at 16:23:40.972
+starting worker pid=54423 on localhost:11084 at 16:23:40.974
+Loading required package: bcf
+Loading required package: bcf
+loaded bcf and set parent environment
+loaded bcf and set parent environment
+Starting to Predict Chain  1 
+Starting to Predict Chain  2 
+Loading...
+Loading...
+ntrees ntrees 20
+p 6
+20ndraws 
+1000p 
+6
+ndraws 1000
+done
+done
+Loading...
+Loading...
+ntrees 20
+p 7
+ndraws 1000
+ntrees 20
+p 7
+ndraws 1000
+done
+done
+Starting to Predict Chain  3 
+Loading...
+ntrees 20
+p 6
+ndraws 1000
+Starting to Predict Chain  4 
+Loading...
+done
+ntrees 20
+p 6
+ndraws 1000
+Loading...
+ntrees 20
+p 7
+ndraws 1000
+done
+done
+Loading...
+ntrees 20
+p 7
+ndraws 1000
+done
