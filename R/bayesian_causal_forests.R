@@ -115,7 +115,7 @@ set_model_arg(
   model = "bc_forest",
   eng = "bcf",
   parsnip = "bcf_ntree_control",
-  original = "bcf_ntree_control",
+  original = "ntree_control",
   func = list(pkg = "tidycausality",fun = "bcf_ntree_control"),
   has_submodel = FALSE
   )
@@ -124,7 +124,7 @@ set_model_arg(
   model = "bc_forest",
   eng = "bcf",
   parsnip = "bcf_ntree_moderate",
-  original = "bcf_ntree_moderate",
+  original = "ntree_moderate",
   func = list(pkg = "tidycausality",fun = "bcf_ntree_moderate"),
   has_submodel = FALSE
 )
@@ -133,7 +133,7 @@ set_model_arg(
   model = "bc_forest",
   eng = "bcf",
   parsnip = "bcf_base_control",
-  original = "bcf_base_control",
+  original = "base_control",
   func = list(pkg = "tidycausality",fun = "bcf_base_control"),
   has_submodel = FALSE
 )
@@ -142,7 +142,7 @@ set_model_arg(
   model = "bc_forest",
   eng = "bcf",
   parsnip = "bcf_power_control",
-  original = "bcf_power_control",
+  original = "power_control",
   func = list(pkg = "tidycausality",fun = "bcf_power_control"),
   has_submodel = FALSE
 )
@@ -151,7 +151,7 @@ set_model_arg(
   model = "bc_forest",
   eng = "bcf",
   parsnip = "bcf_base_moderate",
-  original = "bcf_base_moderate",
+  original = "base_moderate",
   func = list(pkg = "tidycausality",fun = "bcf_base_moderate"),
   has_submodel = FALSE
   )
@@ -160,7 +160,7 @@ set_model_arg(
   model = "bc_forest",
   eng = "bcf",
   parsnip = "bcf_power_moderate",
-  original = "bcf_power_moderate",
+  original = "power_moderate",
   func = list(pkg = "tidycausality",fun = "bcf_power_moderate"),
   has_submodel = FALSE
 )
@@ -216,12 +216,17 @@ bc_forest <- function(
 #' Internal fitting function for BCF models. Validates inputs, prepares data,
 #' and executes the BCF algorithm.
 #'
-#' @param object A model specification object
 #' @param formula Model formula (response ~ predictors)
 #' @param data Data frame containing all variables
 #' @param treatment Name of treatment variable column (default = "W")
-#' @param ... Additional engine-specific arguments:
+#' @param ... Additional engine-specific arguments including model parameters:
 #' \itemize{
+#'   \item `bcf_power_moderate`: Power parameter for moderator forest
+#'   \item `bcf_base_moderate`: Base parameter for moderator forest
+#'   \item `bcf_power_control`: Power parameter for control forest
+#'   \item `bcf_base_control`: Base parameter for control forest
+#'   \item `bcf_ntree_moderate`: Number of trees for moderator forest
+#'   \item `bcf_ntree_control`: Number of trees for control forest
 #'   \item `pihat`: Optional propensity scores
 #'   \item `update_interval`: MCMC progress reporting frequency
 #'   \item Other parameters passed to `bcf::bcf()`
@@ -237,9 +242,12 @@ bc_forest <- function(
 #'
 #' @keywords internal
 #' @export
-bcf_fit <- function(object, formula, data, treatment = "W", ...) {
+bcf_fit <- function(formula, data, treatment = "W", ...) {
   # Start timing
   start_time <- Sys.time()
+
+  # Capture additional args (includes model parameters)
+  dots <- list(...)
 
   # Validate treatment exists
   if (!treatment %in% names(data)) {
@@ -257,28 +265,35 @@ bcf_fit <- function(object, formula, data, treatment = "W", ...) {
   xlev <- lapply(data[, colnames(x), drop = FALSE], function(col) {
     if (is.factor(col)) levels(col) else NULL
   })
-  # Prepare arguments
+  
+  # Prepare arguments - extract model parameters from dots
   args <- list(
     y = y,
     z = z,
     x_control = x,
     x_moderate = x,
-    power_moderate = eval_tidy(object$spec$args$bcf_power_moderate),
-    base_moderate  = eval_tidy(object$spec$args$bcf_base_moderate),
-    power_control  = eval_tidy(object$spec$args$bcf_power_control),
-    base_control   = eval_tidy(object$spec$args$bcf_base_control),
-    ntree_control  = eval_tidy(object$spec$args$bcf_ntree_control),
-    ntree_moderate = eval_tidy(object$spec$args$bcf_ntree_moderate)
+    power_moderate = dots$power_moderate,
+    base_moderate  = dots$base_moderate,
+    power_control  = dots$power_control,
+    base_control   = dots$base_control,
+    ntree_control  = dots$ntree_control,
+    ntree_moderate = dots$ntree_moderate
   )
 
-  # Add dots and exclude the  treatment
-  dots <- list(...)
-  args_clean <- purrr::compact(args)
+  # Remove model parameters from dots to avoid duplication
+  model_params <- c("power_moderate", "base_moderate", "power_control", 
+                    "base_control", "ntree_control", "ntree_moderate")
+  remaining_dots <- dots[!names(dots) %in% model_params]
+  
+  # Combine args with remaining dots and remove NULLs
+  final_args <- c(args, remaining_dots)
+  args_clean <- purrr::compact(final_args)
+  
   print(args_clean)  # inspect
 
   fit <- do.call(bcf::bcf, args_clean)
 
-  # Return tidymodels-compatible 3S object
+  # Return tidymodels-compatible object
   structure(
     list(
       fit = fit,
@@ -287,7 +302,7 @@ bcf_fit <- function(object, formula, data, treatment = "W", ...) {
         treatment = treatment,
         xlev = purrr::compact(xlev)
       ),
-      spec = object,
+      spec = NULL,  # No longer need spec since parameters come from dots
       elapsed = Sys.time() - start_time
     ),
     class = c("bcf_fit", "model_fit")
