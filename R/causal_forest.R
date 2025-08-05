@@ -7,6 +7,7 @@
 #' @importFrom rlang enquo
 #' @importFrom rlang expr
 #' @importFrom rlang abort
+NULL
 
 # Register model and engine ----------------------------------------------------
 
@@ -58,7 +59,7 @@ causal_forest <- function(mode = "regression",subclasses = NULL, num.trees = NUL
 #' @return A fitted `grf` causal forest object.
 #'
 #' @keywords internal
-#' @noRd
+#' @export
 fit_causal_forest <- function(formula, data, treatment = "W", ...) {
   # Capture additional args
   dots <- list(...)
@@ -91,7 +92,7 @@ fit_causal_forest <- function(formula, data, treatment = "W", ...) {
 #' @return Predictions as a list object from `grf::predict`.
 #'
 #' @keywords internal
-#' @noRd
+#' @export
 predict_causal_forest <- function(object, new_data, ...) {
   fit_obj <- if (!is.null(object$fit)) object$fit else object
   terms <- fit_obj$terms
