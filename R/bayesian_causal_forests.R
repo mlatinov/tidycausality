@@ -272,17 +272,17 @@ bcf_fit <- function(formula, data, treatment = "W", ...) {
     z = z,
     x_control = x,
     x_moderate = x,
-    power_moderate = dots$power_moderate,
-    base_moderate  = dots$base_moderate,
-    power_control  = dots$power_control,
-    base_control   = dots$base_control,
-    ntree_control  = dots$ntree_control,
-    ntree_moderate = dots$ntree_moderate
+    power_moderate = dots$bcf_power_moderate,
+    base_moderate  = dots$bcf_base_moderate,
+    power_control  = dots$bcf_power_control,
+    base_control   = dots$bcf_base_control,
+    ntree_control  = dots$bcf_ntree_control,
+    ntree_moderate = dots$bcf_ntree_moderate
   )
 
   # Remove model parameters from dots to avoid duplication
-  model_params <- c("power_moderate", "base_moderate", "power_control", 
-                    "base_control", "ntree_control", "ntree_moderate")
+  model_params <- c("bcf_power_moderate", "bcf_base_moderate", "bcf_power_control", 
+                    "bcf_base_control", "bcf_ntree_control", "bcf_ntree_moderate")
   remaining_dots <- dots[!names(dots) %in% model_params]
   
   # Combine args with remaining dots and remove NULLs
