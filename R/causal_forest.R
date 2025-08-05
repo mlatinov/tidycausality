@@ -4,13 +4,16 @@
 #' @import parsnip
 #' @importFrom hardhat extract_parameter_set_dials
 #' @importFrom dials finalize
-#' @importFrom rlang enquo expr abort
+#' @importFrom rlang enquo
+#' @importFrom rlang expr
+#' @importFrom rlang abort
 
 # Register model and engine ----------------------------------------------------
 
 #' Causal Forest Model Specification
 #'
-#' A parsnip model specification for causal forests using the `grf` package.
+#' @title Causal Forest Model Specification
+#' @description A parsnip model specification for causal forests using the `grf` package.
 #' This model estimates heterogeneous treatment effects with a causal forest.
 #'
 #' @param mode A character string specifying the model mode. Only `"regression"` is supported.
