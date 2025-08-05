@@ -266,18 +266,28 @@ bcf_fit <- function(formula, data, treatment = "W", ...) {
     if (is.factor(col)) levels(col) else NULL
   })
   
-  # Prepare arguments - extract model parameters from dots
+  # Calculate propensity scores (pihat) - required by bcf::bcf
+  # Simple logistic regression for propensity scores
+  prop_formula <- reformulate(colnames(x), response = treatment)
+  prop_model <- glm(prop_formula, data = data, family = binomial())
+  pihat <- predict(prop_model, type = "response")
+  
+  # Prepare arguments - extract model parameters from dots and map to bcf::bcf parameter names
   args <- list(
     y = y,
     z = z,
     x_control = x,
     x_moderate = x,
+    pihat = pihat,
     power_moderate = dots$bcf_power_moderate,
     base_moderate  = dots$bcf_base_moderate,
     power_control  = dots$bcf_power_control,
     base_control   = dots$bcf_base_control,
     ntree_control  = dots$bcf_ntree_control,
-    ntree_moderate = dots$bcf_ntree_moderate
+    ntree_moderate = dots$bcf_ntree_moderate,
+    # Add required MCMC parameters with defaults
+    nburn = 1000,
+    nsim = 1000
   )
 
   # Remove model parameters from dots to avoid duplication
@@ -288,8 +298,6 @@ bcf_fit <- function(formula, data, treatment = "W", ...) {
   # Combine args with remaining dots and remove NULLs
   final_args <- c(args, remaining_dots)
   args_clean <- purrr::compact(final_args)
-  
-  print(args_clean)  # inspect
 
   fit <- do.call(bcf::bcf, args_clean)
 
