@@ -4,25 +4,23 @@
 #' @import parsnip
 #' @importFrom hardhat extract_parameter_set_dials
 #' @importFrom dials finalize
-#' @importFrom rlang enquo expr abort
+#' @importFrom rlang enquo
+#' @importFrom rlang expr
+#' @importFrom rlang abort
 
 # Register model and engine ----------------------------------------------------
 
-#' Causal Forest Model Specification
-#'
-#' A parsnip model specification for causal forests using the `grf` package.
+#' @title Causal Forest Model Specification
+#' @description A parsnip model specification for causal forests using the `grf` package.
 #' This model estimates heterogeneous treatment effects with a causal forest.
 #'
 #' @param mode A character string specifying the model mode. Only `"regression"` is supported.
-#' @param subclasses Not used currently.
 #' @param num.trees Number of trees to grow in the causal forest.
-#' @param mtry Number of variables randomly sampled as candidates at each split.
+#' @param mtry Number of variables randomly sampled at each split.
 #' @param min.node.size Minimum number of observations in a terminal node.
 #'
 #' @return A parsnip model specification object.
-#'
 #' @export
-## Create the model function
 causal_forest <- function(mode = "regression",subclasses = NULL, num.trees = NULL, mtry = NULL, min.node.size = NULL){
 
   # Check for the correct mode
@@ -56,6 +54,7 @@ causal_forest <- function(mode = "regression",subclasses = NULL, num.trees = NUL
 #'
 #' @keywords internal
 #' @noRd
+#' @export
 fit_causal_forest <- function(formula, data, treatment = "W", ...) {
   # Capture additional args
   dots <- list(...)
@@ -89,6 +88,7 @@ fit_causal_forest <- function(formula, data, treatment = "W", ...) {
 #'
 #' @keywords internal
 #' @noRd
+#' @export
 predict_causal_forest <- function(object, new_data, ...) {
   fit_obj <- if (!is.null(object$fit)) object$fit else object
   terms <- fit_obj$terms
