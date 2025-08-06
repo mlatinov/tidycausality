@@ -25,7 +25,7 @@
   ## Set the model arguments
 
   # Number of trees for prognostic forest
-  set_model_arg(
+  parsnip::set_model_arg(
     model = "bc_forest",
     eng = "bcf",
     parsnip = "bcf_ntree_control",
@@ -33,8 +33,7 @@
     func = list(pkg = "tidycausality",fun = "bcf_ntree_control"),
     has_submodel = FALSE
   )
-  # Number of trees for treatment effect forest
-  set_model_arg(
+  parsnip::set_model_arg(
     model = "bc_forest",
     eng = "bcf",
     parsnip = "bcf_ntree_moderate",
@@ -42,8 +41,7 @@
     func = list(pkg = "tidycausality",fun = "bcf_ntree_moderate"),
     has_submodel = FALSE
   )
-  # Base parameter for control forest
-  set_model_arg(
+  parsnip::set_model_arg(
     model = "bc_forest",
     eng = "bcf",
     parsnip = "bcf_base_control",
@@ -51,8 +49,7 @@
     func = list(pkg = "tidycausality",fun = "bcf_base_control"),
     has_submodel = FALSE
   )
-  # Power parameter for control forest
-  set_model_arg(
+  parsnip::set_model_arg(
     model = "bc_forest",
     eng = "bcf",
     parsnip = "bcf_power_control",
@@ -60,8 +57,8 @@
     func = list(pkg = "tidycausality",fun = "bcf_power_control"),
     has_submodel = FALSE
   )
-  # Base parameter for moderator forest
-  set_model_arg(
+  # Base parameter for bcf_base_moderate
+  parsnip::set_model_arg(
     model = "bc_forest",
     eng = "bcf",
     parsnip = "bcf_base_moderate",
@@ -71,6 +68,10 @@
   )
   # Power parameter for moderator forest
   set_model_arg(
+    func = list(pkg = "tidycausality", fun = "bcf_base_moderate"),
+    has_submodel = FALSE
+  )
+  parsnip::set_model_arg(
     model = "bc_forest",
     eng = "bcf",
     parsnip = "bcf_power_moderate",
@@ -78,20 +79,22 @@
     func = list(pkg = "tidycausality",fun = "bcf_power_moderate"),
     has_submodel = FALSE
   )
-  ## Define how to fit the model
-  set_fit(
+  # Define how to fit the model
+  parsnip::set_fit(
     model = "bc_forest",
     mode = "regression",
     eng = "bcf",
     value = list(
       interface = "formula",
       protect = c("formula","data"),
+      protect = c("formula", "data"),
       func = c(pkg = "tidycausality", fun = "bcf_fit"),
       defaults = list()
     )
   )
-  # Set predict to return tau
-  set_pred(
+
+  # Set prediction
+  parsnip::set_pred(
     model = "bc_forest",
     eng = "bcf",
     mode = "regression",
@@ -104,10 +107,11 @@
         new_data = expr(new_data)
       ),
       post = NULL
+      )
     )
-  )
+
   # Set Encoding
-  set_encoding(
+  parsnip::set_encoding(
     model = "bc_forest",
     eng = "bcf",
     mode = "regression",
@@ -119,6 +123,7 @@
     )
   )
 }
+
 #' Parameter Functions for Bayesian Causal Forests
 #'
 #' @description
@@ -259,7 +264,7 @@ bc_forest <- function(
 
   # Check for the correct mode
   if (mode  != "regression") {
-    rlang::abort("`mode` should be 'regression'.")
+    rlang::abort("mode should be 'regression'.")
   }
 
   # Capture the arguments in quosures
@@ -414,7 +419,7 @@ bcf_fit <- function(
     ntree_moderate = 10
   )
 
-  # OVERWRITE TUNEABLE PARAMS WITH `...`
+  # OVERWRITE TUNEABLE PARAMS WITH ...
   tuneable_params <- c(
     "power_moderate",
     "base_moderate",
@@ -490,6 +495,7 @@ bcf_fit <- function(
     class = c("bcf_fit", "model_fit")
   )
 }
+
 #' Predict Method for Bayesian Causal Forest Fits
 #'
 #' @description
@@ -559,20 +565,19 @@ predict.bcf_fit <- function(object, new_data, ...) {
     # Return posterior summaries
     tibble::tibble(
       # Individual Treatment Effect (Tau)
-       # tau is how much the treatment would change the outcome.
+      # tau is how much the treatment would change the outcome.
       .pred_tau = colMeans(object$fit$fit$tau, na.rm = TRUE),
       .pred_lower_tau = apply(object$fit$fit$tau, 2, quantile, 0.025, na.rm = TRUE),
       .pred_upper_tau = apply(object$fit$fit$tau, 2, quantile, 0.975, na.rm = TRUE),
       # Predicted Control Outcome (Mu, untreated potential outcome)
-       # mu is the counterfactual (what happens if untreated)
+      # mu is the counterfactual (what happens if untreated)
       .pred_mu = colMeans(object$fit$fit$mu,na.rm = TRUE),
       .pred_lower_mu = apply(object$fit$fit$mu, 2, quantile, 0.025, na.rm = TRUE),
-      .pred_upper_mu = apply(object$fit$fit$mu, 2, quantile, 0.975, na.rm = TRUE),
-
-      # Predicted observed outcome given W
-      .pred_hat = colMeans(object$fit$fit$yhat,na.rm = TRUE)
-      )
+      .pred_upper_mu = apply(object$fit$fit$mu, 2, quantile, 0.025, na.rm = TRUE)
+    )
   }, error = function(e) {
     stop("Prediction failed: ", e$message)
   })
 }
+
+
