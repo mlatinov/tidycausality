@@ -1,8 +1,7 @@
 
 test_that("bc_forest fit and predict",{
-
   # Simulated data
-  n = 100
+  n = 20
   p = 5
   X <- matrix(rnorm(n * p), ncol = p)
   colnames(X) <- paste0("X", 1:p)
@@ -28,26 +27,28 @@ test_that("bc_forest fit and predict",{
 
   # Model spec
   model <- bc_forest(
-    bcf_power_moderate = ~1,
-    bcf_base_moderate = ~0.8,
-    bcf_power_control = ~1,
-    bcf_base_control = ~0.5,
-    bcf_ntree_moderate = ~20,
-    bcf_ntree_control = ~20
+    bcf_power_moderate = 1,
+    bcf_base_moderate = 0.8,
+    bcf_power_control = 1,
+    bcf_base_control = 0.5,
+    bcf_ntree_moderate = 10,
+    bcf_ntree_control = 10
   ) %>%
     set_engine("bcf") %>%
     set_mode("regression")
 
-  # now call parsnip::fit()
-  fit_result <- fit(model, y ~ ., data = data)
+  # Fit with pihat
+  data$pihat <- propensity
+
+  fit_result <- fit(model, y ~ . - W, data = data, treatment = "W",pihat = propensity)
 
   # Test if the fit object is a bc_forest
-  expect_true(inherits(fit_result$fit, "bc_forest"))
-  expect_true(!is.null(fit_result$fit$predictions))
+  expect_true(inherits(fit_result$fit, "bcf_fit"))
+  expect_true(!is.null(fit_result$fit$fit$tau))
 
   # Predict on new data
   preds <- predict(fit_result, new_data = data)
-
+  data_output <- bind_cols(data,preds)
   # Return have to be tibble of predictions
   expect_s3_class(preds, "tbl_df")
   expect_named(preds, c(".pred",".pred_lower",".pred_upper"))
