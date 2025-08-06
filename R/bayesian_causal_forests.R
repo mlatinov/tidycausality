@@ -1,5 +1,4 @@
 
-
 #### Bayesian Causal Forests ####
 
 # Package imports
@@ -8,25 +7,131 @@
 #' @import dials
 #' @import rlang
 #' @importFrom tibble tibble
+#' @importFrom purrr compact
 
-# Set new model
-if (!"bc_forest" %in% parsnip::get_model_env()$models) {
-  set_new_model("bc_forest")
+# Package loading hook to register bc_forest model
+.onLoad <- function(libname, pkgname) {
+  # Set new model
+  if (!"bc_forest" %in% parsnip::get_model_env()$models) {
+    parsnip::set_new_model("bc_forest")
+  }
+  # Set model mode
+  parsnip::set_model_mode(model = "bc_forest", mode = "regression")
+  # Set model engine
+  parsnip::set_model_engine(model = "bc_forest", mode = "regression", eng = "bcf")
+  # Set model Dependency
+  parsnip::set_dependency(model = "bc_forest", eng = "bcf", pkg = "bcf", mode = "regression")
+
+  ## Set the model arguments
+
+  # Number of trees for prognostic forest
+  set_model_arg(
+    model = "bc_forest",
+    eng = "bcf",
+    parsnip = "bcf_ntree_control",
+    original = "ntree_control",
+    func = list(pkg = "tidycausality",fun = "bcf_ntree_control"),
+    has_submodel = FALSE
+  )
+  # Number of trees for treatment effect forest
+  set_model_arg(
+    model = "bc_forest",
+    eng = "bcf",
+    parsnip = "bcf_ntree_moderate",
+    original = "ntree_moderate",
+    func = list(pkg = "tidycausality",fun = "bcf_ntree_moderate"),
+    has_submodel = FALSE
+  )
+  # Base parameter for control forest
+  set_model_arg(
+    model = "bc_forest",
+    eng = "bcf",
+    parsnip = "bcf_base_control",
+    original = "base_control",
+    func = list(pkg = "tidycausality",fun = "bcf_base_control"),
+    has_submodel = FALSE
+  )
+  # Power parameter for control forest
+  set_model_arg(
+    model = "bc_forest",
+    eng = "bcf",
+    parsnip = "bcf_power_control",
+    original = "power_control",
+    func = list(pkg = "tidycausality",fun = "bcf_power_control"),
+    has_submodel = FALSE
+  )
+  # Base parameter for moderator forest
+  set_model_arg(
+    model = "bc_forest",
+    eng = "bcf",
+    parsnip = "bcf_base_moderate",
+    original = "base_moderate",
+    func = list(pkg = "tidycausality",fun = "bcf_base_moderate"),
+    has_submodel = FALSE
+  )
+  # Power parameter for moderator forest
+  set_model_arg(
+    model = "bc_forest",
+    eng = "bcf",
+    parsnip = "bcf_power_moderate",
+    original = "power_moderate",
+    func = list(pkg = "tidycausality",fun = "bcf_power_moderate"),
+    has_submodel = FALSE
+  )
+  ## Define how to fit the model
+  set_fit(
+    model = "bc_forest",
+    mode = "regression",
+    eng = "bcf",
+    value = list(
+      interface = "formula",
+      protect = c("formula","data"),
+      func = c(pkg = "tidycausality", fun = "bcf_fit"),
+      defaults = list()
+    )
+  )
+  # Set predict to return tau
+  set_pred(
+    model = "bc_forest",
+    eng = "bcf",
+    mode = "regression",
+    type = "numeric",
+    value = list(
+      pre = NULL,
+      func = c(fun = "predict.bcf_fit"),
+      args = list(
+        object = expr(object),
+        new_data = expr(new_data)
+      ),
+      post = NULL
+    )
+  )
+  # Set Encoding
+  set_encoding(
+    model = "bc_forest",
+    eng = "bcf",
+    mode = "regression",
+    options = list(
+      predictor_indicators = "none",
+      compute_intercept = FALSE,
+      remove_intercept = FALSE,
+      allow_sparse_x = FALSE
+    )
+  )
 }
-# Set model mode
-set_model_mode(model = "bc_forest",mode = "regression")
-# Set model engine
-set_model_engine(model = "bc_forest",mode = "regression",eng = "bcf")
-# Set model Dependency
-set_dependency(model = "bc_forest",eng = "bcf",pkg = "bcf",mode = "regression")
-
 #' Parameter Functions for Bayesian Causal Forests
 #'
 #' @description
-#' Create tuning parameter objects for BCF models. These functions are used with
-#' `tune_grid()` and other tidymodels tuning functions.
+#' These functions define tuning parameter objects used with Bayesian Causal Forest (BCF) models.
+#' Each function returns a parameter object (created via `dials::new_quant_param()`) that can be
+#' used in tuning workflows such as `tune_grid()` or `tune_bayes()` within the `tidymodels` framework.
 #'
-#' @param range Two-element numeric vector specifying parameter bounds
+#' The parameters include forest hyperparameters for both the control (prognostic) and moderator
+#' (treatment effect) forests.
+#'
+#' @param range A two-element numeric vector defining the lower and upper bounds of the parameter.
+#'
+#' @return A `quant_param` object compatible with `dials` tuning infrastructure.
 #'
 #' @name bcf_params
 NULL
@@ -108,73 +213,40 @@ bcf_power_moderate <- function(range = c(1, 5)) {
   )
 }
 
-## Set the model arguments
-
-# Number of trees for prognostic forest
-set_model_arg(
-  model = "bc_forest",
-  eng = "bcf",
-  parsnip = "bcf_ntree_control",
-  original = "ntree_control",
-  func = list(pkg = "tidycausality",fun = "bcf_ntree_control"),
-  has_submodel = FALSE
-  )
-# Number of trees for treatment effect forest
-set_model_arg(
-  model = "bc_forest",
-  eng = "bcf",
-  parsnip = "bcf_ntree_moderate",
-  original = "ntree_moderate",
-  func = list(pkg = "tidycausality",fun = "bcf_ntree_moderate"),
-  has_submodel = FALSE
-)
-# Base parameter for control forest
-set_model_arg(
-  model = "bc_forest",
-  eng = "bcf",
-  parsnip = "bcf_base_control",
-  original = "base_control",
-  func = list(pkg = "tidycausality",fun = "bcf_base_control"),
-  has_submodel = FALSE
-)
-# Power parameter for control forest
-set_model_arg(
-  model = "bc_forest",
-  eng = "bcf",
-  parsnip = "bcf_power_control",
-  original = "power_control",
-  func = list(pkg = "tidycausality",fun = "bcf_power_control"),
-  has_submodel = FALSE
-)
-# Base parameter for moderator forest
-set_model_arg(
-  model = "bc_forest",
-  eng = "bcf",
-  parsnip = "bcf_base_moderate",
-  original = "base_moderate",
-  func = list(pkg = "tidycausality",fun = "bcf_base_moderate"),
-  has_submodel = FALSE
-  )
-# Power parameter for moderator forest
-set_model_arg(
-  model = "bc_forest",
-  eng = "bcf",
-  parsnip = "bcf_power_moderate",
-  original = "power_moderate",
-  func = list(pkg = "tidycausality",fun = "bcf_power_moderate"),
-  has_submodel = FALSE
-)
-
 #' Bayesian Causal Forest Model Specification
 #'
-#' @param mode A single character string for the model type (only "regression")
-#' @param bcf_power_moderate Power parameter for moderator forest
-#' @param bcf_base_moderate Base parameter for moderator forest
-#' @param bcf_power_control Power parameter for control forest
-#' @param bcf_base_control Base parameter for control forest
-#' @param bcf_ntree_moderate Number of trees for moderator forest
-#' @param bcf_ntree_control Number of trees for control forest
-#' @param ... Additional arguments passed to engine
+#' @description
+#' Defines a model specification for a Bayesian Causal Forest (BCF) within a modeling framework
+#' (e.g., `parsnip`, custom modeling APIs). This function stores hyperparameters and mode,
+#' and prepares them for use in downstream model fitting functions.
+#'
+#' @details
+#' BCF is a semi-parametric Bayesian method designed to estimate heterogeneous treatment effects.
+#' This specification allows you to optionally customize forest hyperparameters used for both the
+#' control and moderator forests in the BCF model.
+#'
+#' Note: Only `"regression"` mode is supported at this time.
+#'
+#' @param mode A single character string indicating the model type. Must be `"regression"`.
+#' @param bcf_power_moderate Power parameter for the moderator forest (controls tree depth).
+#' @param bcf_base_moderate Base parameter for the moderator forest (controls prior split probability).
+#' @param bcf_power_control Power parameter for the control forest (controls tree depth).
+#' @param bcf_base_control Base parameter for the control forest (controls prior split probability).
+#' @param bcf_ntree_moderate Number of trees in the moderator forest.
+#' @param bcf_ntree_control Number of trees in the control forest.
+#' @param ... Not currently used. Reserved for future arguments passed to the engine.
+#'
+#' @return A model specification object of class `bc_forest`.
+#'
+#' @examples
+#' bc_forest(
+#'   bcf_power_moderate = 1,
+#'   bcf_base_moderate = 0.8,
+#'   bcf_power_control = 1,
+#'   bcf_base_control = 0.5,
+#'   bcf_ntree_moderate = 20,
+#'   bcf_ntree_control = 20
+#' )
 #' @export
 bc_forest <- function(
     mode = "regression",
@@ -197,7 +269,8 @@ bc_forest <- function(
     bcf_power_control = enquo(bcf_power_control),
     bcf_base_control = enquo(bcf_base_control),
     bcf_ntree_moderate = enquo(bcf_ntree_moderate),
-    bcf_ntree_control = enquo(bcf_ntree_control)
+    bcf_ntree_control = enquo(bcf_ntree_control),
+    preserve_formula = TRUE
   )
   # Save some empty slots for future parts of the specification
   new_model_spec(
@@ -213,187 +286,293 @@ bc_forest <- function(
 #' Fit a Bayesian Causal Forest Model
 #'
 #' @description
-#' Internal fitting function for BCF models. Validates inputs, prepares data,
-#' and executes the BCF algorithm.
+#' Fits a Bayesian Causal Forest (BCF) model using the `bcf` package. This function handles preprocessing,
+#' formula parsing, propensity score estimation (if not provided), and model fitting. It returns
+#' a structured object with fitted model components and metadata.
 #'
-#' @param object A model specification object
-#' @param formula Model formula (response ~ predictors)
-#' @param data Data frame containing all variables
-#' @param treatment Name of treatment variable column (default = "W")
-#' @param ... Additional engine-specific arguments:
-#' \itemize{
-#'   \item `pihat`: Optional propensity scores
-#'   \item `update_interval`: MCMC progress reporting frequency
-#'   \item Other parameters passed to `bcf::bcf()`
+#' @param formula A two-sided formula specifying the outcome and predictors (e.g., `y ~ x1 + x2`).
+#' @param data A data frame containing the variables used in the formula and treatment.
+#' @param treatment Character string giving the name of the treatment variable column. Defaults to `"W"`.
+#' @param nburn Number of burn-in MCMC iterations. Default is 200.
+#' @param nsim Number of post-burn-in MCMC iterations. Default is 200.
+#' @param nthin Thinning interval for MCMC samples. Default is 1.
+#' @param update_interval Frequency of progress reporting during MCMC. Default is 100.
+#' @param n_chains Number of MCMC chains to run. Default is 2.
+#' @param sd_control Prior standard deviation for control trees. Default is 2.
+#' @param sd_moderate Prior standard deviation for treatment effect trees. Default is 1.
+#' @param include_pi Where to include propensity scores in the model. One of `"control"`, `"moderate"`, or `"both"`. Default is `"control"`.
+#' @param use_muscale Logical; whether to rescale `mu` prior to MCMC. Default is `TRUE`.
+#' @param use_tauscale Logical; whether to rescale `tau` prior to MCMC. Default is `TRUE`.
+#' @param random_seed Integer random seed. Defaults to a random integer.
+#' @param verbose Logical; if `TRUE`, prints fitting messages. Default is `FALSE`.
+#' @param ... Additional arguments passed to `bcf::bcf()`, including:
+#'   \describe{
+#'     \item{`pihat`}{Optional vector of estimated propensity scores. If not provided, a logistic regression is used to estimate them.}
+#'     \item{`power_moderate`, `base_moderate`, `ntree_moderate`}{Tree prior parameters for treatment effect trees.}
+#'     \item{`power_control`, `base_control`, `ntree_control`}{Tree prior parameters for control trees.}
+#'   }
+#'
+#' @return An object of class `bcf_fit` (subclass of `model_fit`) containing:
+#' \describe{
+#'   \item{`fit`}{A `bc_forest` object with posterior samples of `tau` (treatment effects), `mu` (untreated outcomes), and `yhat` (predicted outcomes).}
+#'   \item{`preproc`}{Preprocessing details such as the outcome variable name.}
+#'   \item{`elapsed`}{Model fitting runtime in seconds.}
 #' }
 #'
-#' @return A `bcf_fit` object containing:
-#' \itemize{
-#'   \item `fit`: The raw BCF model object
-#'   \item `preproc`: Preprocessing information
-#'   \item `spec`: Original model specification
-#'   \item `elapsed`: Runtime in seconds
-#' }
+#' @details
+#' The fitted `tau` values represent individual-level treatment effects (i.e., the difference between predicted outcomes under treatment and control).
+#' The `mu` values represent predicted outcomes if untreated. This setup allows for individualized counterfactual predictions: \eqn{Y(1) = mu + tau}, \eqn{Y(0) = mu}.
+#'
+#' Propensity scores (`pihat`) are used to adjust for confounding. If not supplied, they are estimated via logistic regression of `treatment ~ predictors`.
 #'
 #' @keywords internal
 #' @export
-bcf_fit <- function(formula, data, treatment = "W", ...) {
-
-   # Start timing
+bcf_fit <- function(
+    formula,
+    data,
+    treatment = "W",
+    # MCMC parameters
+    nburn = 200,
+    nsim = 200,
+    nthin = 1,
+    update_interval = 100,
+    n_chains = 2,
+    # Tree parameters
+    sd_control = 2,
+    sd_moderate = 1,
+    include_pi = "control",
+    use_muscale = TRUE,
+    use_tauscale = TRUE,
+    random_seed = sample.int(.Machine$integer.max, 1),
+    verbose = FALSE,
+    ...  # Captures tuneable parameters
+) {
+  # Start timing
   start_time <- Sys.time()
 
-  # Capture additional arguments
-  dots <- list(...)
+  #  FORMULA HANDLING
+  orig_formula <- formula
+  formula_terms <- terms(formula, data = data)
+  formula_env <- environment()
 
-  # Validate treatment exists
+  # DATA VALIDATION
   if (!treatment %in% names(data)) {
     rlang::abort(paste("Treatment variable", treatment, "not found in data"))
   }
 
-  # EXTRACTION
-  mf <- model.frame(formula, data)
+  # MODEL FRAME PROCESSING
+  mf <- model.frame(formula_terms, data)
   y <- model.response(mf)
-  x <- model.matrix(formula, mf)
+  x <- model.matrix(formula_terms, mf)
   x <- x[, !colnames(x) == "(Intercept)", drop = FALSE]
   z <- data[[treatment]]
 
-  # Store factor levels manually
+  # FACTOR LEVEL PRESERVATION
   xlev <- lapply(data[, colnames(x), drop = FALSE], function(col) {
     if (is.factor(col)) levels(col) else NULL
   })
-  # Prepare arguments
+
+  # PROPENSITY SCORE HANDLING
+  if (is.null(list(...)$pihat)) {
+    if (verbose) message("Estimating propensity scores")
+    suppressWarnings({
+      pi_model <- glm(z ~ x, family = binomial())
+      pihat <- pmax(
+        pmin(predict(pi_model, type = "response"), 0.01, 0.99)
+      )
+    })
+  } else {
+    pihat <- list(...)$pihat
+  }
+
+  # DEFAULT TUNEABLE PARAMS
   args <- list(
     y = y,
     z = z,
     x_control = x,
     x_moderate = x,
-    power_moderate = dots$power_moderate,
-    base_moderate  = dots$base_moderate,
-    power_control  = dots$power_control,
-    base_control   = dots$base_control,
-    ntree_control  = dots$ntree_control,
-    ntree_moderate = dots$ntree_moderate
+    pihat = pihat,
+    nburn = nburn,
+    nsim = nsim,
+    nthin = nthin,
+    update_interval = update_interval,
+    n_chains = n_chains,
+    sd_control = sd_control,
+    sd_moderate = sd_moderate,
+    include_pi = include_pi,
+    use_muscale = use_muscale,
+    use_tauscale = use_tauscale,
+    random_seed = random_seed,
+    verbose = verbose,
+
+    # default values for tuneable params
+    power_moderate = 1,
+    base_moderate = 0.8,
+    power_control = 1,
+    base_control = 0.5,
+    ntree_control = 10,
+    ntree_moderate = 10
   )
 
-  # Remove model parameters from dots to avoid duplication
-  model_params <- c("power_moderate", "base_moderate", "power_control",
-                    "base_control", "ntree_control", "ntree_moderate")
-  remaining_dots <- dots[!names(dots) %in% model_params]
+  # OVERWRITE TUNEABLE PARAMS WITH `...`
+  tuneable_params <- c(
+    "power_moderate",
+    "base_moderate",
+    "power_control",
+    "base_control",
+    "ntree_control",
+    "ntree_moderate"
+  )
 
-  # Combine args with remaining dots and remove NULLs
-  final_args <- c(args, remaining_dots)
-  args_clean <- purrr::compact(final_args)
+  purrr::walk(tuneable_params, function(param) {
+    if (!is.null(list(...)[[param]])) {
+      args[[param]] <<- list(...)[[param]]
+    }
+  })
 
+  # MODEL FITTING
+  fit <- do.call(bcf::bcf, args)
 
-  fit <- do.call(bcf::bcf, args_clean)
-
-  # Return tidymodels-compatible 3S object
+  # OBJECT STRUCTURE
   structure(
     list(
-      fit = fit,
-      preproc = list(
-        formula = formula,
-        treatment = treatment,
-        xlev = purrr::compact(xlev)
+      fit = structure(
+        list(
+          parameters = list(
+            nburn = nburn,
+            nsim = nsim,
+            nthin = nthin,
+            update_interval = update_interval,
+            n_chains = n_chains,
+            sd_control = sd_control,
+            sd_moderate = sd_moderate,
+            base_control = args$base_control,
+            power_control = args$power_control,
+            base_moderate = args$base_moderate,
+            power_moderate = args$power_moderate,
+            ntree_control = args$ntree_control,
+            ntree_moderate = args$ntree_moderate,
+            include_pi = include_pi,
+            use_muscale = use_muscale,
+            use_tauscale = use_tauscale,
+            random_seed = random_seed,
+            verbose = verbose,
+            dots_params = list(...)[!names(list(...)) %in%
+                                      c("pihat", names(formals(bcf::bcf)))]
+          ),
+
+          # MODEL OUTPUTS
+          tau = fit$tau,
+          mu = fit$mu,
+          yhat = fit$yhat,
+          model = fit,
+
+          # PREPROCESSING INFO
+          preproc = list(
+            original_formula = orig_formula,
+            formula_terms = formula_terms,
+            formula_env = formula_env,
+            treatment = treatment,
+            xlev = purrr::compact(xlev),
+            contrasts = contrasts,
+            pihat = if (exists("pihat")) pihat else NULL
+          )
+        ),
+        class = "bc_forest"
       ),
-      spec = NULL,
+
+      preproc = list(
+        y_var = all.vars(formula[[2]])
+      ),
+
       elapsed = Sys.time() - start_time
     ),
     class = c("bcf_fit", "model_fit")
   )
 }
-## Define how to fit the model
-set_fit(
-  model = "bc_forest",
-  mode = "regression",
-  eng = "bcf",
-  value = list(
-    interface = "formula",
-    protect = c("formula","data"),
-    func = c(pkg = "tidycausality", fun = "bcf_fit"),
-    defaults = list()
-  )
-)
-
 #' Predict Method for Bayesian Causal Forest Fits
 #'
 #' @description
-#' Predicts treatment effects (tau) from a fitted BCF model, including optional
-#' credible intervals.
+#' Predicts individual treatment effects (tau) and potential outcomes (mu) from a fitted BCF model.
+#' Optionally includes credible intervals for both the treatment effect and the untreated potential outcome.
 #'
-#' @param object A fitted `bcf_fit` object
-#' @param new_data Data frame containing new observations
-#' @param ... Additional arguments passed to `bcf::predict.bcf()`
+#' @param object A fitted `bcf_fit` object.
+#' @param new_data A data frame containing new observations.
+#' @param ... Additional arguments passed to internal prediction methods.
 #'
 #' @return A tibble with columns:
+#' \describe{
+#'   \item{.pred_tau}{Estimated individual treatment effect (Y(1) - Y(0)).}
+#'   \item{.pred_lower_tau}{Lower bound of 95% credible interval for treatment effect.}
+#'   \item{.pred_upper_tau}{Upper bound of 95% credible interval for treatment effect.}
+#'   \item{.pred_mu}{Estimated outcome if untreated (counterfactual, Y(0)).}
+#'   \item{.pred_lower_mu}{Lower bound of 95% credible interval for untreated outcome.}
+#'   \item{.pred_upper_mu}{Upper bound of 95% credible interval for untreated outcome.}
+#'   \item{.pred_hat}{The average predicted observed outcome, which incorporates treatment status 𝑊}
+#' }
+#'
+#' @details
+#' For each observation, the function returns:
 #' \itemize{
-#'   \item `.pred`: Predicted treatment effects (tau)
-#'   \item `.pred_lower`: Lower bound of credible interval (if available)
-#'   \item `.pred_upper`: Upper bound of credible interval (if available)
+#'   \item The predicted control outcome (\code{mu}) — what would happen if untreated.
+#'   \item The treatment effect (\code{tau}) — how much the treatment would shift the outcome.
+#'   \item The predicted treated outcome can be computed as \code{mu + tau}.
 #' }
 #'
 #' @examples
 #' \dontrun{
-#' # After fitting a model:
+#' # Predict on new data
 #' predictions <- predict(bcf_fit, new_data = test_data)
+#'
+#' # Compute treated potential outcomes
+#' predictions$.pred_treated <- predictions$.pred_mu + predictions$.pred_tau
 #' }
 #'
 #' @export
 predict.bcf_fit <- function(object, new_data, ...) {
-  # Recreate model matrix using stored info
-  new_mf <- model.frame(
-    object$preproc$formula,
-    new_data,
-    xlev = object$preproc$xlev
+
+  # Reconstruct terms object
+  formula_terms <- object$fit$fit$preproc$formula_terms
+  if (is.null(formula_terms)) {
+    formula_terms <- tryCatch(
+      terms(object$fit$fit$preproc$original_formula, data = new_data),
+      error = function(e) stop("Cannot reconstruct formula terms")
     )
-  new_x <- model.matrix(object$preproc$formula, new_mf)
-  new_x <- new_x[, !colnames(new_x) == "(Intercept)", drop = FALSE]
+  }
+  attr(formula_terms, ".Environment") <- object$fit$fit$preproc$formula_env
 
-  # Predict
-  preds <- predict(object$fit,
-                   x_control = new_x,
-                   x_moderate = new_x,
-                   ...)
-  # Return as tibble
-  tibble::tibble(
-    .pred = preds$tau,
-    .pred_lower = preds$tau_ci_low,
-    .pred_upper = preds$tau_ci_high
-  )
-}
+  # Use tryCatch to build model matrix
+  tryCatch({
+    new_mf <- model.frame(
+      delete.response(formula_terms),
+      data = new_data,
+      xlev = object$fit$fit$preproc$xlev,
+      na.action = na.pass
+    )
 
-# Set predict to return tau
-set_pred(
-  model = "bc_forest",
-  eng = "bcf",
-  mode = "regression",
-  type = "numeric",
-  value = list(
-    pre = NULL,
-    func = c(fun = "predict.bcf_fit"),
-    args = list(
-      object = expr(object),
-      new_data = expr(new_data)
-    ),
-    post = function(results, object) {
-      tibble::tibble(
-        .pred = results$tau,
-        .pred_lower = preds$tau_ci_low,
-        .pred_upper = preds$tau_ci_high
+    new_x <- model.matrix(
+      delete.response(formula_terms),
+      data = new_mf,
+      contrasts.arg = object$fit$fit$preproc$contrasts
+    )[, -1, drop = FALSE]
+
+    # Return posterior summaries
+    tibble::tibble(
+      # Individual Treatment Effect (Tau)
+       # tau is how much the treatment would change the outcome.
+      .pred_tau = colMeans(object$fit$fit$tau, na.rm = TRUE),
+      .pred_lower_tau = apply(object$fit$fit$tau, 2, quantile, 0.025, na.rm = TRUE),
+      .pred_upper_tau = apply(object$fit$fit$tau, 2, quantile, 0.975, na.rm = TRUE),
+      # Predicted Control Outcome (Mu, untreated potential outcome)
+       # mu is the counterfactual (what happens if untreated)
+      .pred_mu = colMeans(object$fit$fit$mu,na.rm = TRUE),
+      .pred_lower_mu = apply(object$fit$fit$mu, 2, quantile, 0.025, na.rm = TRUE),
+      .pred_upper_mu = apply(object$fit$fit$mu, 2, quantile, 0.975, na.rm = TRUE),
+
+      # Predicted observed outcome given W
+      .pred_hat = colMeans(object$fit$fit$yhat,na.rm = TRUE)
       )
-    }
-  )
-)
-# Set Encoding
-set_encoding(
-  model = "bc_forest",
-  eng = "bcf",
-  mode = "regression",
-  options = list(
-    predictor_indicators = "none",
-    compute_intercept = FALSE,
-    remove_intercept = FALSE,
-    allow_sparse_x = FALSE
-  )
-)
-
+  }, error = function(e) {
+    stop("Prediction failed: ", e$message)
+  })
+}
