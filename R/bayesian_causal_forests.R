@@ -9,117 +9,7 @@
 #' @importFrom tibble tibble
 #' @importFrom purrr compact
 
-# Package loading hook to register bc_forest model
-.onLoad <- function(libname, pkgname) {
-  # Set new model
-  if (!"bc_forest" %in% parsnip::get_model_env()$models) {
-    parsnip::set_new_model("bc_forest")
-  }
-  # Set model mode
-  parsnip::set_model_mode(model = "bc_forest", mode = "regression")
-  # Set model engine
-  parsnip::set_model_engine(model = "bc_forest", mode = "regression", eng = "bcf")
-  # Set model Dependency
-  parsnip::set_dependency(model = "bc_forest", eng = "bcf", pkg = "bcf", mode = "regression")
-
-  ## Set the model arguments
-
-  # Number of trees for prognostic forest
-  parsnip::set_model_arg(
-    model = "bc_forest",
-    eng = "bcf",
-    parsnip = "bcf_ntree_control",
-    original = "ntree_control",
-    func = list(pkg = "tidycausality",fun = "bcf_ntree_control"),
-    has_submodel = FALSE
-  )
-  parsnip::set_model_arg(
-    model = "bc_forest",
-    eng = "bcf",
-    parsnip = "bcf_ntree_moderate",
-    original = "ntree_moderate",
-    func = list(pkg = "tidycausality",fun = "bcf_ntree_moderate"),
-    has_submodel = FALSE
-  )
-  parsnip::set_model_arg(
-    model = "bc_forest",
-    eng = "bcf",
-    parsnip = "bcf_base_control",
-    original = "base_control",
-    func = list(pkg = "tidycausality",fun = "bcf_base_control"),
-    has_submodel = FALSE
-  )
-  parsnip::set_model_arg(
-    model = "bc_forest",
-    eng = "bcf",
-    parsnip = "bcf_power_control",
-    original = "power_control",
-    func = list(pkg = "tidycausality",fun = "bcf_power_control"),
-    has_submodel = FALSE
-  )
-  # Base parameter for bcf_base_moderate
-  parsnip::set_model_arg(
-    model = "bc_forest",
-    eng = "bcf",
-    parsnip = "bcf_base_moderate",
-    original = "base_moderate",
-    func = list(pkg = "tidycausality",fun = "bcf_base_moderate"),
-    has_submodel = FALSE
-  )
-  parsnip::set_model_arg(
-    model = "bc_forest",
-    eng = "bcf",
-    parsnip = "bcf_power_moderate",
-    original = "power_moderate",
-    func = list(pkg = "tidycausality",fun = "bcf_power_moderate"),
-    has_submodel = FALSE
-  )
-  # Define how to fit the model
-  parsnip::set_fit(
-    model = "bc_forest",
-    mode = "regression",
-    eng = "bcf",
-    value = list(
-      interface = "formula",
-      protect = c("formula","data"),
-      protect = c("formula", "data"),
-      func = c(pkg = "tidycausality", fun = "bcf_fit"),
-      defaults = list()
-    )
-  )
-
-  # Set prediction
-  parsnip::set_pred(
-    model = "bc_forest",
-    eng = "bcf",
-    mode = "regression",
-    type = "numeric",
-    value = list(
-      pre = NULL,
-      func = c(fun = "predict.bcf_fit"),
-      args = list(
-        object = expr(object),
-        new_data = expr(new_data)
-      ),
-      post = NULL
-      )
-    )
-
-  # Set Encoding
-  parsnip::set_encoding(
-    model = "bc_forest",
-    eng = "bcf",
-    mode = "regression",
-    options = list(
-      predictor_indicators = "none",
-      compute_intercept = FALSE,
-      remove_intercept = FALSE,
-      allow_sparse_x = FALSE
-    )
-  )
-}
-
-#' Parameter Functions for Bayesian Causal Forests
+#'@title Parameter Functions for Bayesian Causal Forests
 #'
 #' @description
 #' These functions define tuning parameter objects used with Bayesian Causal Forest (BCF) models.
@@ -213,7 +103,7 @@ bcf_power_moderate <- function(range = c(1, 5)) {
   )
 }
 
-#' Bayesian Causal Forest Model Specification
+#'@title Bayesian Causal Forest Model Specification
 #'
 #' @description
 #' Defines a model specification for a Bayesian Causal Forest (BCF) within a modeling framework
@@ -283,7 +173,7 @@ bc_forest <- function(
   )
 }
 
-#' Fit a Bayesian Causal Forest Model
+#'@title Fit a Bayesian Causal Forest Model
 #'
 #' @description
 #' Fits a Bayesian Causal Forest (BCF) model using the `bcf` package. This function handles preprocessing,
@@ -491,7 +381,7 @@ bcf_fit <- function(
   )
 }
 
-#' Predict Method for Bayesian Causal Forest Fits
+#'@title Predict Method for Bayesian Causal Forest Fits
 #'
 #' @description
 #' Predicts individual treatment effects (tau) and potential outcomes (mu) from a fitted BCF model.
@@ -530,32 +420,14 @@ bcf_fit <- function(
 #' }
 #'
 #' @export
-predict.bcf_fit <- function(object, new_data, ...) {
+predict.bcf_fit <- function(object,new_data) {
 
-  # Reconstruct terms object
-  formula_terms <- object$fit$fit$preproc$formula_terms
-  if (is.null(formula_terms)) {
-    formula_terms <- tryCatch(
-      terms(object$fit$fit$preproc$original_formula, data = new_data),
-      error = function(e) stop("Cannot reconstruct formula terms")
-    )
-  }
-  attr(formula_terms, ".Environment") <- object$fit$fit$preproc$formula_env
-
-  # Use tryCatch to build model matrix
-  tryCatch({
-    new_mf <- model.frame(
-      delete.response(formula_terms),
-      data = new_data,
-      xlev = object$fit$fit$preproc$xlev,
-      na.action = na.pass
-    )
-
-    new_x <- model.matrix(
-      delete.response(formula_terms),
-      data = new_mf,
-      contrasts.arg = object$fit$fit$preproc$contrasts
-    )[, -1, drop = FALSE]
+  # This predict method returns posterior summaries of the training data only.
+  # Note: The Bayesian Causal Forest model does NOT support true out-of-sample prediction.
+  # The returned tibble includes:
+  #  - Individual treatment effects (tau) with 95% credible intervals
+  #  - Predicted untreated potential outcomes (mu) with 95% credible intervals
+  #  - Predicted observed outcomes (yhat)
 
     # Return posterior summaries
     tibble::tibble(
@@ -571,10 +443,6 @@ predict.bcf_fit <- function(object, new_data, ...) {
       .pred_upper_mu = apply(object$fit$fit$mu, 2, quantile, 0.025, na.rm = TRUE),
       # Predicted observed outcome given W
       .pred_hat = colMeans(object$fit$fit$yhat,na.rm = TRUE)
-      )
-  }, error = function(e) {
-    stop("Prediction failed: ", e$message)
-  })
+    )
 }
-
 
