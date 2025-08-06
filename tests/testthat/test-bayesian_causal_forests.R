@@ -48,10 +48,16 @@ test_that("bc_forest fit and predict",{
 
   # Predict on new data
   preds <- predict(fit_result, new_data = data)
-  data_output <- bind_cols(data,preds)
   # Return have to be tibble of predictions
   expect_s3_class(preds, "tbl_df")
-  expect_named(preds, c(".pred",".pred_lower",".pred_upper"))
+  expect_named(preds, c(".pred_tau",
+                        ".pred_lower_tau",
+                        ".pred_upper_tau",
+                        ".pred_mu",
+                        ".pred_lower_mu" ,
+                        ".pred_upper_mu",
+                        ".pred_hat"))
+
   expect_equal(nrow(preds), nrow(data))
 })
 

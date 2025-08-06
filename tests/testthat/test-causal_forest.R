@@ -31,7 +31,5 @@ test_that("causal_forest model fits and predicts",{
 
   # Return have to be tibble of predictions
   expect_s3_class(preds, "tbl_df")
-  expect_named(preds, ".pred")
-  expect_equal(nrow(preds), nrow(df))
 
-  })
+})

@@ -66,11 +66,6 @@
     func = list(pkg = "tidycausality",fun = "bcf_base_moderate"),
     has_submodel = FALSE
   )
-  # Power parameter for moderator forest
-  set_model_arg(
-    func = list(pkg = "tidycausality", fun = "bcf_base_moderate"),
-    has_submodel = FALSE
-  )
   parsnip::set_model_arg(
     model = "bc_forest",
     eng = "bcf",
@@ -573,8 +568,10 @@ predict.bcf_fit <- function(object, new_data, ...) {
       # mu is the counterfactual (what happens if untreated)
       .pred_mu = colMeans(object$fit$fit$mu,na.rm = TRUE),
       .pred_lower_mu = apply(object$fit$fit$mu, 2, quantile, 0.025, na.rm = TRUE),
-      .pred_upper_mu = apply(object$fit$fit$mu, 2, quantile, 0.025, na.rm = TRUE)
-    )
+      .pred_upper_mu = apply(object$fit$fit$mu, 2, quantile, 0.025, na.rm = TRUE),
+      # Predicted observed outcome given W
+      .pred_hat = colMeans(object$fit$fit$yhat,na.rm = TRUE)
+      )
   }, error = function(e) {
     stop("Prediction failed: ", e$message)
   })
