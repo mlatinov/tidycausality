@@ -1,12 +1,8 @@
 
 #### CAUSAL FOREST ####
 # Package imports
-#' @import parsnip
-#' @importFrom hardhat extract_parameter_set_dials
-#' @import dials
-#' @import rlang
-#' @importFrom tibble tibble
-#' @importFrom purrr compact
+#' @import tidymodels
+#' @import tidyverse
 #' @import grf
 
 #' @title Causal Forest Model Specification
@@ -148,7 +144,7 @@ fit_causal_forest <- function(
   fit <- do.call(grf::causal_forest, args)
 
   # Predicted outcomes for treated and untreated
-  mu_hat_1 <- grf::predict(fit, estimate.variance = TRUE, treatment = 1)$predictions
+  mu_hat_1 <- grf:::predict(fit, estimate.variance = TRUE, treatment = 1)$predictions
   mu_hat_0 <- grf::predict(fit, estimate.variance = TRUE, treatment = 0)$predictions
 
   # OBJECT STRUCTURE RETURNED

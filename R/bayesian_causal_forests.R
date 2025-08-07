@@ -2,12 +2,9 @@
 #### Bayesian Causal Forests ####
 
 # Package imports
-#' @import parsnip
-#' @importFrom hardhat extract_parameter_set_dials
-#' @import dials
-#' @import rlang
-#' @importFrom tibble tibble
-#' @importFrom purrr compact
+#' @import tidymodels
+#' @import tidyverse
+
 
 #'@title Parameter Functions for Bayesian Causal Forests
 #'
