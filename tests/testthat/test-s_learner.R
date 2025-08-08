@@ -14,11 +14,12 @@ test_that("Returns correct S-learner structure",{
   data <- data.frame(
     x1 = x1,
     x2 = x2,
-    treatment = as.factor(treatment),
+    treatment = as.character(treatment),
     outcome = outcome
   )
   # Create recipe
-  rec <- recipe(outcome ~ x1 + x2 + treatment, data = data)
+  rec <- recipe(outcome ~ x1 + x2 + treatment, data = data) %>%
+    step_dummy(all_nominal_predictors())
 
   # Random forest with fixed parameters
   s_fit1 <- s_learner(
@@ -26,10 +27,10 @@ test_that("Returns correct S-learner structure",{
     data = data,
     recipe = rec,
     treatment = "treatment",
-    tune_params = list(mtry = 2, trees = 100)
-  )
+    tune_params = list(mtry = 3,trees = 100)
+    )
   # Tests
   expect_s3_class(s_fit1,class = "s_learner")
   expect_named(s_fit1,expected = c("base_model","model_fit","estimates"))
-  expect_true(all(c(".tau",".pred_1",".pred_0")),names(s_fit1$estimates))
+  expect_named(s_fit1$estimates, expected = c(".tau", ".pred_1", ".pred_0"), ignore.order = TRUE)
 })

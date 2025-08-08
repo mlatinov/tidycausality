@@ -169,7 +169,6 @@ s_learner <- function(
 
   # Supported models
   valid_model_names <- c("random_forest", "mars", "xgb", "glmnet")
-  # Supported parameters
   valid_params <- list(
     random_forest = c("mtry", "trees", "min_n"),
     mars = c("num_terms", "prod_degree", "prune_method"),
@@ -177,28 +176,19 @@ s_learner <- function(
     glmnet = c("penalty", "mixture")
   )
 
-  # Error handling for parameters
+  # Validate tune_params
   if (is.null(names(tune_params)) || any(names(tune_params) == "")) {
     stop("All elements of `tune_params` must be named.")
   }
-  # Extract column as vector
-  treatment_vec <- data[[treatment]]
-  # Check the class of the treatment is factor if not convert it
-    if (!is.factor(treatment_vec)) {
-      warning(paste0("Converting", treatment, "to factor",collapse = ","))
-      data[[treatment]] <- as.factor(treatment_vec)
-    }
-  # Check if the model name is supported
+  # Validate base_model
   model_name <- base_model
   if (is.character(model_name)) {
     if (!(model_name %in% valid_model_names)) {
       stop(paste0("Model '", model_name, "' is not supported."))
     }
   }
-  # Subset for only valid params for selected model
+  # Subset and validate parameters
   params_to_use <- tune_params[names(tune_params) %in% valid_params[[model_name]]]
-
-  # Warning if for the model are selected wrong parameters
   invalid_params <- setdiff(names(tune_params), valid_params[[model_name]])
   if (length(invalid_params) > 0) {
     warning(
@@ -210,146 +200,141 @@ s_learner <- function(
       ),
       call. = FALSE,
       immediate. = TRUE
-      )
-    }
-  # Build base model
-  base_model <- switch(model_name,
-                       random_forest = parsnip::rand_forest(),
-                       mars          = parsnip::mars(),
-                       xgb           = parsnip::boost_tree(),
-                       glmnet        = parsnip::linear_reg()
-  ) %>% parsnip::set_mode(mode)
-
-  # Apply parameters
-  for (param in names(params_to_use)) {
-    val <- params_to_use[[param]]
-    base_model <- base_model %>%
-      parsnip::set_args(!!rlang::sym(param) := val)
+    )
   }
 
-  # Set engine
-  base_model <- switch(model_name,
-                       random_forest = base_model %>% parsnip::set_engine("ranger"),
-                       mars          = base_model %>% parsnip::set_engine("earth"),
-                       xgb           = base_model %>% parsnip::set_engine("xgboost"),
-                       glmnet        = base_model %>% parsnip::set_engine("glmnet")
-  )
+  # Build base model spec
+  base_spec <- switch(model_name,
+                      random_forest = parsnip::rand_forest(),
+                      mars = parsnip::mars(),
+                      xgb = parsnip::boost_tree(),
+                      glmnet = parsnip::linear_reg()
+  ) %>%
+    parsnip::set_mode(mode) %>%
+    parsnip::set_engine(switch(
+      model_name,
+      random_forest = "ranger",
+      mars = "earth",
+      xgb = "xgboost",
+      glmnet = "glmnet"
+    ))
 
   # Validate model spec
-  if (!inherits(base_model, "model_spec")) {
+  if (!inherits(base_spec, "model_spec")) {
     stop("base_model must be a valid parsnip model.")
   }
-  # Validate the recipe
+
+  # Validate recipe
   if (!inherits(recipe, "recipe")) {
     stop("A valid `recipe` must be provided.")
   }
 
-  # Model Workflow
+  # Create initial workflow
   model_workflow <- workflows::workflow() %>%
-    workflows::add_model(base_model) %>%
-    workflows::add_recipe(recipe)
+    workflows::add_recipe(recipe) %>%
+    workflows::add_model(base_spec)
 
-  # Sets params to a valid range
-  param_set <- extract_parameter_set_dials(model_workflow) %>%
-    finalize(data)
+  # Handle fixed and tuning parameters
+  if (length(params_to_use) > 0) {
+    fixed_params <- params_to_use[!purrr::map_lgl(params_to_use, ~ inherits(.x, "tune"))]
+    tune_params <- params_to_use[purrr::map_lgl(params_to_use, ~ inherits(.x, "tune"))]
 
-  # Handle tuning
-  if (any(purrr::map_lgl(params_to_use, ~ inherits(.x, "tune")))) {
-    # Check if resamples are provided
-    if (is.null(resamples)) stop("`resamples` must be provided when tuning.")
-    # Check the metrics and set rmse as a def
-    if (is.null(metrics)) {
-      metrics <- yardstick::metric_set(rmse)
-    } else {
-      # Check if it's a valid metric set
-      if (!inherits(metrics, "metric_set")) {
-        stop("`metrics` must be NULL or a valid metric_set created with yardstick::metric_set().")
+    # Apply fixed params
+    if (length(fixed_params) > 0) {
+      updated_spec <- rlang::exec(
+        parsnip::set_args,
+        base_spec,
+        !!!fixed_params
+      )
+      model_workflow <- workflows::update_model(
+        model_workflow,
+        updated_spec
+      )
+    }
+
+    # Tune if any tune() params exist
+    if (length(tune_params) > 0) {
+
+      if (is.null(resamples)) stop("`resamples` must be provided when tuning.")
+
+      if (is.null(metrics)) {
+        metrics <- yardstick::metric_set(rmse)
+      } else {
+        if (!inherits(metrics, "metric_set")) {
+          stop("`metrics` must be NULL or a valid metric_set created with yardstick::metric_set().")
+        }
       }
-    }
-    message("Starting Grid search...")
-    # Tune grid control
-    control_tune_grid <- tune::control_grid(save_pred = TRUE)
 
-    # Tune with tune grid
-    tuned_result <- tune::tune_grid(
-      model_workflow,
-      resamples = resamples,
-      grid = grid,
-      metrics = metrics,
-      parameters = param_set,
-      control = control_tune_grid
-    )
-    # Optimize = TRUE Run a Basic Bayes Optimization
-    if (optimize) {
-      message("Starting Bayesian optimization after initial grid search...")
-      # Control Bayes optimization
-      control_bayes <- tune::control_bayes(
-        no_improve = 20,
-        save_workflow = TRUE,
-        save_pred = TRUE,
-        seed = 123
-        )
-      # Run Bayes optimization
-      tuned_result <- tune::tune_bayes(
-        object = model_workflow,
-        initial = tuned_result,
+      # Finalize parameter set
+      param_set <- hardhat::extract_parameter_set_dials(model_workflow) %>%
+        hardhat::finalize(data)
+
+      message("Starting Grid search...")
+      control_tune_grid <- tune::control_grid(save_pred = TRUE)
+
+      tuned_result <- tune::tune_grid(
+        model_workflow,
+        resamples = resamples,
+        grid = grid,
         metrics = metrics,
-        iter = 100,
-        control = control_bayes
+        parameters = param_set,
+        control = control_tune_grid
+      )
+
+      if (optimize) {
+        message("Starting Bayesian optimization after initial grid search...")
+        control_bayes <- tune::control_bayes(
+          no_improve = 20,
+          save_workflow = TRUE,
+          save_pred = TRUE,
+          seed = 123
         )
+        tuned_result <- tune::tune_bayes(
+          object = model_workflow,
+          initial = tuned_result,
+          metrics = metrics,
+          iter = 100,
+          control = control_bayes
+        )
+      }
+
+      best_result <- tune::select_best(tuned_result, metrics)
+      model_workflow <- tune::finalize_workflow(model_workflow, best_result)
     }
-    # Best model
-    best_result <- tune::select_best(tuned_result, metrics)
-    model_workflow <- tune::finalize_workflow(model_workflow, best_result)
   }
   # Final fit
   model_fit <- fit(model_workflow, data = data)
 
-  # Counterfactual data
+  # Counterfactual predictions
   data_1 <- data %>% dplyr::mutate(!!rlang::sym(treatment) := factor(1))
   data_0 <- data %>% dplyr::mutate(!!rlang::sym(treatment) := factor(0))
 
-  # Predict
   y1 <- predict(model_fit, new_data = data_1)$.pred
   y0 <- predict(model_fit, new_data = data_0)$.pred
-  # Compute tau
   tau_s <- y1 - y0
 
-  # Bootstrapping for estimating  confidence intervals (CI) of tau
+  # Bootstrapping
   if (bootstrap) {
     message(paste("Running", bootstrap_iters, "bootstrap iterations..."))
-    # Initialize progress bar
     pb <- txtProgressBar(min = 0, max = bootstrap_iters, style = 3)
-
-    # Bootstrap matrix for storing the tau results
     boot_taus <- matrix(NA, nrow = nrow(data), ncol = bootstrap_iters)
 
-    # Sequential bootstrap implementation
-    for (i in bootstrap_iters) {
-      # Update progress bar
+    for (i in seq_len(bootstrap_iters)) {
       setTxtProgressBar(pb, i)
-
-      # Sample with replace = TRUE
-      boot_index <- sample(nrow(data),replace = TRUE)
-      boot_data <- data[boot_index,]
-
-      # Model fitting
+      boot_index <- sample(nrow(data), replace = TRUE)
+      boot_data <- data[boot_index, ]
       boot_fit <- fit(model_workflow, data = boot_data)
-
-      # Predict on original data (not bootstrap sample)
       boot_y1 <- predict(boot_fit, new_data = data_1)$.pred
       boot_y0 <- predict(boot_fit, new_data = data_0)$.pred
-
-      # Store tau estimates
       boot_taus[, i] <- boot_y1 - boot_y0
     }
     close(pb)
 
-    # Calculate confidence intervals
-    tau_ci <- t(
-      apply(boot_taus, 1, quantile,probs = c(bootstrap_alpha/2, 1 - bootstrap_alpha/2),na.rm = TRUE))
+    tau_ci <- t(apply(boot_taus, 1, quantile,
+                      probs = c(bootstrap_alpha / 2, 1 - bootstrap_alpha / 2),
+                      na.rm = TRUE
+    ))
 
-    # Tibble with estimates
     estimates <- tibble::tibble(
       .tau = tau_s,
       .tau_lower = tau_ci[, 1],
@@ -357,26 +342,24 @@ s_learner <- function(
       .pred_1 = y1,
       .pred_0 = y0
     )
-    # If bootstrap = FALSE return the estimates without the CI
-  } else{
-    # Tibble with estimates
+  } else {
     estimates <- tibble::tibble(
       .tau = tau_s,
       .pred_1 = y1,
       .pred_0 = y0
     )
   }
-  # Return object
+
+  # Return final object
   structure(
     list(
-      base_model = base_model,
+      base_model = base_spec,
       model_fit = model_fit,
       estimates = estimates
     ),
     class = "s_learner"
   )
 }
-
 
 #'Predict Method for S-Learner Objects
 #'
