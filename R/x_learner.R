@@ -378,10 +378,89 @@ x_learner <- function(
   )
 }
 
+#' Predict Conditional Average Treatment Effects with X-Learner Model
+#'
+#' Generates individualized treatment effect estimates (CATE) using a fitted X-learner model.
+#'
+#' @param object An object of class \code{x_learner} returned by \code{x_learner()} function.
+#'   This object must contain fitted outcome models, CATE models, and propensity score model.
+#' @param new_data A \code{data.frame} or \code{tibble} containing new observations for which to
+#'   predict treatment effects. Must include the treatment indicator column and all predictors used in training.
+#' @param treatment A string specifying the name of the treatment indicator column in \code{new_data}.
+#'   This column should be binary (0/1).
+#'
+#' @return A \code{tibble} with the following columns:
+#' \itemize{
+#'   \item \code{tau_hat}: The combined estimated conditional average treatment effect (CATE).
+#'   \item \code{tau_hat_treated}: CATE estimates from the model trained on treated group pseudo-outcomes.
+#'   \item \code{tau_hat_control}: CATE estimates from the model trained on control group pseudo-outcomes.
+#'   \item \code{propensity_score}: Estimated propensity score (probability of treatment).
+#' }
+#'
+#' @details
+#' This method implements the prediction step for the X-learner meta-algorithm:
+#' \itemize{
+#'   \item Uses the fitted outcome models to compute pseudo-outcomes on treated and control groups.
+#'   \item Applies CATE models trained separately on these pseudo-outcomes.
+#'   \item Estimates propensity scores to weight and combine CATE predictions.
+#' }
+#'
+#' If no observations exist for a treatment group in \code{new_data}, the corresponding CATE predictions
+#' for that group will be \code{NA}.
+#'
+#' @examples
+#' \dontrun{
+#' # Assuming `xmod` is a fitted x_learner model
+#' preds <- predict(xmod, new_data = new_dataset, treatment = "treatment")
+#' }
+#'
+#' @export
+predict.x_learner <- function(object, new_data, treatment = NULL) {
 
+  # Get outcome name from original recipe
+  outcome_name <- object$model_fit_1$pre$actions$recipe$recipe$var_info %>%
+    filter(role == "outcome") %>%
+    pull(variable)
 
+  # Data preparation
+  new_data_t1 <- new_data %>% filter(.data[[treatment]] == 1) %>% select(-all_of(treatment))
+  new_data_t0 <- new_data %>% filter(.data[[treatment]] == 0) %>% select(-all_of(treatment))
 
+  # Get predictions
+  safe_predict <- function(model, newdata) {
+    preds <- predict(model, newdata)
+    if (is.data.frame(preds)) return(preds$.pred)
+    as.numeric(preds)
+  }
 
+  # Propensity scores
+  e_hat <- predict(object$ps_model, new_data, type = "prob")$.pred_1
+
+  # Pseudo-effects
+  if (nrow(new_data_t1) > 0) {
+    D1 <- new_data_t1[[outcome_name]] - safe_predict(object$model_fit_0, new_data_t1)
+    tau_hat_treated <- safe_predict(object$tau_1_fit, new_data)
+  } else {
+    tau_hat_treated <- rep(NA, nrow(new_data))
+  }
+
+  if (nrow(new_data_t0) > 0) {
+    D0 <- safe_predict(object$model_fit_1, new_data_t0) - new_data_t0[[outcome_name]]
+    tau_hat_control <- safe_predict(object$tau_0_fit, new_data)
+  } else {
+    tau_hat_control <- rep(NA, nrow(new_data))
+  }
+  # Combined CATE
+  tau_hat <- (1 - e_hat) * tau_hat_treated + e_hat * tau_hat_control
+
+  # Return results
+  tibble(
+    tau_hat = tau_hat,
+    tau_hat_treated = tau_hat_treated,
+    tau_hat_control = tau_hat_control,
+    propensity_score = e_hat
+  )
+}
 
 
 
