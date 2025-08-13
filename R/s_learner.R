@@ -331,6 +331,8 @@ s_learner <- function(
 
     # Return a list with Effects
     effect_measures <- list(
+      y1_prob = y1_prob, # Predicted prob for Y = 1
+      y0_prob = y0_prob, # Predicted prob for Y = 0
       RD = rd,      # Risk Diffrence
       RR = rr,      # Relative Risk
       OR = or,      # Odds Ration
@@ -355,10 +357,11 @@ s_learner <- function(
     ate <- mean(tau)                       # ATE (Average Treatment Effect)
     atc <- mean(tau[data[treatment == 0]]) # ATC (Average Treatment effect on Control)
     atc <- mean(tau[data[treatment == 0]]) # ATT (Average Treatment effect on Treated)
-    policy <- "Working on "
 
     # Return a list with Effects
     effect_measures <- list(
+      y1_prob = y1,  # Predicted prob for Y = 1
+      y0_prob = y0,  # Predicted prob for Y = 0
       ITE = tau_s, # Individual effect
       ATE = ate,   # Average Treatment Effect
       ATT = att,   # Average Treatment effect on Treated
@@ -374,10 +377,8 @@ s_learner <- function(
       names(res) <- c("lower", "upper")
       res
     }
-
     # Progress Bar
     pb <- utils::txtProgressBar(max = bootstrap_iters, style = 3)
-
     # Bootstrap for CIs for the effects when mode classification
     if (mode == "classification") {
       # Matrices to store predictions
@@ -422,6 +423,9 @@ s_learner <- function(
 
       # Compute CIs for all measures
       effect_measures_boots <- list(
+        y1_pred = boot_y1,
+        y0_pred = boot_y0,
+        ITE = boot_tau,
         ATE = c(estimate = mean(ate_boot, na.rm = TRUE),
                 ci(ate_boot, alpha = bootstrap_alpha)),
         ATT = c(estimate = mean(att_boot, na.rm = TRUE),
@@ -472,6 +476,9 @@ s_learner <- function(
 
       # Compute CIs for all measures
       effect_measures_boots <- list(
+        y1_pred = boot_y1,
+        y0_pred = boot_y0,
+        ITE = boot_tau,
         ATE = c(estimate = mean(ate_boot, na.rm = TRUE),
                 ci(ate_boot, alpha = bootstrap_alpha)),
         ATT = c(estimate = mean(att_boot, na.rm = TRUE),
@@ -547,7 +554,7 @@ s_learner <- function(
       policy_details <- list(
         policy_tree_model = policy_tree,
         best_gain = policy_gain,
-        policy_vector = policy_vector,
+        policy_vector = policy_vector
       )
 
     }
