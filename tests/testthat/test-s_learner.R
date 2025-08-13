@@ -1,26 +1,44 @@
 
 test_that("Test the S-learner structure",{
 
-  # Random forest with fixed parameters
-  s_fit1 <- s_learner(
+  # Random forest with fixed parameters for regression
+  s_fit_reg <- s_learner(
     base_model = "random_forest",
-    data = data_test,
-    recipe = s_learner_recipe,
+    mode = "regression",
+    data = data_test_reg,
+    recipe = s_learner_recipe_reg,
     treatment = "treatment",
     tune_params = list(mtry = 3,trees = 100)
     )
-  # Tests
-  expect_s3_class(s_fit1,class = "s_learner")
-  expect_named(s_fit1,expected = c("base_model","model_fit","estimates"))
-  expect_named(s_fit1$estimates, expected = c(".tau", ".pred_1", ".pred_0"), ignore.order = TRUE)
+  # Random forest with fixed parameters for classification
+  s_fit_cl <- s_learner(
+    base_model = "random_forest",
+    mode = "classification",
+    data = data_test_cl,
+    recipe = s_learner_recipe_cl,
+    treatment = "treatment",
+    tune_params = list(mtry = 3,trees = 100)
+  )
+  # Tests class of the object
+  expect_s3_class(s_fit_reg,class = "s_learner")
+  expect_s3_class(s_fit_cl,class = "s_learner")
+  # Test if the function returns every output
+  expect_named(s_fit_reg,expected = c("base_model","model_fit","effect_measures","effect_measures_boots","modeling_results","policy_details"))
+  expect_named(s_fit_cl,expected = c("base_model","model_fit","effect_measures","effect_measures_boots","modeling_results","policy_details"))
+  # Test if the function returns a list
+  expect_s3_class(s_fit_reg$effect_measures,class = "list")
+  expect_s3_class(s_fit_cl$effect_measures,class = "list")
+  # Test if the effect measures returns all metrics based on mode
+  expect_named(s_fit_reg$effect_measures, expected = c("ITE", "ATE", "ATT","ATC","y1_prob","y0_prob"), ignore.order = TRUE)
+  expect_named(s_fit_cl$effect_measures, expected = c("ITE", "ATE", "ATT","ATC","RR","RD","OR","NNT","PNS","PN","y1_prob","y0_prob"), ignore.order = TRUE)
 })
 
 test_that("Test the returned fixed hyperparameters", {
   # Random forest
   s_fit_rf <- s_learner(
     base_model = "random_forest",
-    data = data_test,
-    recipe = s_learner_recipe,
+    data = data_test_reg,
+    recipe = s_learner_recipe_reg,
     treatment = "treatment",
     tune_params = list(mtry = 2, trees = 120, min_n = 10)
   )
@@ -30,8 +48,8 @@ test_that("Test the returned fixed hyperparameters", {
   # Mars
   s_fit_mars <- s_learner(
     base_model = "mars",
-    data = data_test,
-    recipe = s_learner_recipe,
+    data = data_test_reg,
+    recipe = s_learner_recipe_reg,
     treatment = "treatment",
     tune_params = list(num_terms = 2, prod_degree = 2)
   )
@@ -41,8 +59,8 @@ test_that("Test the returned fixed hyperparameters", {
   # Glmnet
   s_fit_glmnet <- s_learner(
     base_model = "glmnet",
-    data = data_test,
-    recipe = s_learner_recipe,
+    data = data_test_reg,
+    recipe = s_learner_recipe_reg,
     treatment = "treatment",
     tune_params = list(penalty = 1e-3, mixture = 0.5)
   )
@@ -89,11 +107,12 @@ test_that("Test the tune feature", {
   # Random forest
   s_fit_rf <- s_learner(
     base_model = "random_forest",
-    data = data_test,
-    recipe = s_learner_recipe,
+    data = data_test_reg,
+    mode = "regression",
+    recipe = s_learner_recipe_reg,
     treatment = "treatment",
-    resamples = resamples_test_data,
-    metrics = metric,
+    resamples = resamples_test_data_reg,
+    metrics = metric_reg,
     grid = 3,
     tune_params = list(mtry = tune(), trees = tune(), min_n = tune())
   )
@@ -103,11 +122,12 @@ test_that("Test the tune feature", {
   # Mars
   s_fit_mars <- s_learner(
     base_model = "mars",
-    data = data_test,
-    recipe = s_learner_recipe,
+    data = data_test_reg,
+    mode = "regression",
+    recipe = s_learner_recipe_reg,
     treatment = "treatment",
-    resamples = resamples_test_data,
-    metrics = metric,
+    resamples = resamples_test_data_reg,
+    metrics = metric_reg,
     grid = 3,
     tune_params = list(num_terms = tune(), prod_degree = tune())
   )
@@ -117,11 +137,12 @@ test_that("Test the tune feature", {
   # Glmnet
   s_fit_glmnet <- s_learner(
     base_model = "glmnet",
-    data = data_test,
-    recipe = s_learner_recipe,
+    data = data_test_reg,
+    mode = "regression",
+    recipe = s_learner_recipe_reg,
     treatment = "treatment",
-    resamples = resamples_test_data,
-    metrics = metric,
+    resamples = resamples_test_data_reg,
+    metrics = metric_reg,
     grid = 3,
     tune_params = list(penalty = tune(), mixture = tune())
   )
@@ -134,11 +155,12 @@ test_that("Test the Optimization feature",{
   # Random forest
   s_fit_rf <- s_learner(
     base_model = "random_forest",
-    data = data_test,
-    recipe = s_learner_recipe,
+    data = data_test_reg,
+    mode = "regression",
+    recipe = s_learner_recipe_reg,
     treatment = "treatment",
-    resamples = resamples_test_data,
-    metrics = metric,
+    resamples = resamples_test_data_reg,
+    metrics = metric_reg,
     grid = 20,
     optimize = TRUE,
     tune_params = list(mtry = tune(), trees = tune(), min_n = tune())
@@ -149,11 +171,12 @@ test_that("Test the Optimization feature",{
   # Mars
   s_fit_mars <- s_learner(
     base_model = "mars",
-    data = data_test,
-    recipe = s_learner_recipe,
+    data = data_test_reg,
+    mode = "regression",
+    recipe = s_learner_recipe_reg,
     treatment = "treatment",
-    resamples = resamples_test_data,
-    metrics = metric,
+    resamples = resamples_test_data_reg,
+    metrics = metric_reg,
     grid = 20,
     optimize = TRUE,
     tune_params = list(num_terms = tune(), prod_degree = tune())
@@ -164,11 +187,12 @@ test_that("Test the Optimization feature",{
   # Glmnet
   s_fit_glmnet <- s_learner(
     base_model = "glmnet",
-    data = data_test,
-    recipe = s_learner_recipe,
+    data = data_test_reg,
+    mode = "regression",
+    recipe = s_learner_recipe_reg,
     treatment = "treatment",
-    resamples = resamples_test_data,
-    metrics = metric,
+    resamples = resamples_test_data_reg,
+    metrics = metric_reg,
     grid = 20,
     optimize = TRUE,
     tune_params = list(penalty = tune(), mixture = tune())
@@ -179,56 +203,100 @@ test_that("Test the Optimization feature",{
 
 test_that("Test Bootstrap feature",{
 
-  # Random forest
-  s_fit_rf <- s_learner(
+  # Random forest reg
+  s_fit_rf_reg <- s_learner(
     base_model = "random_forest",
-    data = data_test,
-    recipe = s_learner_recipe,
+    data = data_test_reg,
+    mode = "regression",
+    recipe = s_learner_recipe_reg,
     treatment = "treatment",
     tune_params = list(mtry = 2, trees = 120, min_n = 10),
     bootstrap = TRUE,
     bootstrap_iters = 20,
     bootstrap_alpha = 0.05
   )
-  # Mars
-  s_fit_mars <- s_learner(
-    base_model = "mars",
-    data = data_test,
-    recipe = s_learner_recipe,
+  # Random Forest Cl
+  s_fit_rf_cl <- s_learner(
+    base_model = "random_forest",
+    data = data_test_cl,
+    mode = "classification",
+    recipe = s_learner_recipe_cl,
     treatment = "treatment",
-    tune_params = list(num_terms = 2, prod_degree = 2),
-    bootstrap = TRUE,
-    bootstrap_iters = 20,
-    bootstrap_alpha = 0.05
-  )
-  # Glmnet
-  s_fit_glmnet <- s_learner(
-    base_model = "glmnet",
-    data = data_test,
-    recipe = s_learner_recipe,
-    treatment = "treatment",
-    tune_params = list(penalty = 1e-3, mixture = 0.5),
+    tune_params = list(mtry = 2, trees = 120, min_n = 10),
     bootstrap = TRUE,
     bootstrap_iters = 20,
     bootstrap_alpha = 0.05
   )
 
   # Test the structure of the output
-  expect_named(s_fit_glmnet$estimates,expected = c(".tau",".tau_lower",".tau_upper",".pred_1",".pred_0"))
-  expect_named(s_fit_mars$estimates,expected = c(".tau",".tau_lower",".tau_upper",".pred_1",".pred_0"))
-  expect_named(s_fit_rf$estimates,expected = c(".tau",".tau_lower",".tau_upper",".pred_1",".pred_0"))
+  expect_named(s_fit_rf_reg$effect_measures_boots,expected = c("ATE","ATC","ATT","ITE","y1_prob","y0_prob"))
+  expect_named(s_fit_rf_cl$effect_measures_boots,expected = c("ATE","ATC","ATT","RR","RD","OR","NNT","PNS","PN","y1_prob","y0_prob"))
 
-  # Test if output is a tibble
-  expect_s3_class(s_fit_glmnet$estimates, "tbl_df")
-  expect_s3_class(s_fit_mars$estimates, "tbl_df")
-  expect_s3_class(s_fit_rf$estimates, "tbl_df")
+  # Test if output is a list
+  expect_s3_class(s_fit_rf_reg$effect_measures_boots, "list")
+  expect_s3_class(s_fit_rf_cl$effect_measures_boots, "list")
 
-  # Test if the output is numeric
-  expect_type(s_fit_glmnet$estimates$.tau, "double")
-  expect_type(s_fit_glmnet$estimates$.tau_lower, "double")
-  expect_type(s_fit_glmnet$estimates$.tau_upper, "double")
-  expect_type(s_fit_glmnet$estimates$.pred_1, "double")
-  expect_type(s_fit_glmnet$estimates$.pred_0, "double")
+  # Test if the output is numeric Regression and Classification
+
+  # Classification metrics
+  expect_type(s_fit_rf_cl$effect_measures_boots$ATE, "double")
+  expect_type(s_fit_rf_cl$effect_measures_boots$ATC, "double")
+  expect_type(s_fit_rf_cl$effect_measures_boots$ATT, "double")
+
+  expect_type(s_fit_rf_cl$effect_measures_boots$ITE, "double")
+  expect_type(s_fit_rf_cl$effect_measures_boots$y1_prob, "double")
+  expect_type(s_fit_rf_cl$effect_measures_boots$y0_prob, "double")
+
+  expect_type(s_fit_rf_cl$effect_measures_boots$RR, "double")
+  expect_type(s_fit_rf_cl$effect_measures_boots$RD, "double")
+  expect_type(s_fit_rf_cl$effect_measures_boots$OR, "double")
+
+  expect_type(s_fit_rf_cl$effect_measures_boots$NNT, "double")
+  expect_type(s_fit_rf_cl$effect_measures_boots$PNS, "double")
+  expect_type(s_fit_rf_cl$effect_measures_boots$PN, "double")
+
+  # Regression Metric
+  expect_type(s_fit_rf_reg$effect_measures_boots$ATE, "double")
+  expect_type(s_fit_rf_reg$effect_measures_boots$ATC, "double")
+  expect_type(s_fit_rf_reg$effect_measures_boots$ATT, "double")
+
+  expect_type(s_fit_rf_reg$effect_measures_boots$ITE, "double")
+  expect_type(s_fit_rf_reg$effect_measures_boots$y1_prob, "double")
+  expect_type(s_fit_rf_reg$effect_measures_boots$y1_prob, "double")
+})
+
+test_that("Test Policy Feature",{
+
+  # Random forest reg Greedy
+  s_fit_rf_greedy <- s_learner(
+    base_model = "random_forest",
+    data = data_test_reg,
+    mode = "regression",
+    recipe = s_learner_recipe_reg,
+    treatment = "treatment",
+    tune_params = list(mtry = 2, trees = 120, min_n = 10),
+    policy = TRUE,
+    policy_method = "greedy"
+  )
+  # Random forest reg Tree
+  s_fit_rf_tree <- s_learner(
+    base_model = "random_forest",
+    data = data_test_reg,
+    mode = "regression",
+    recipe = s_learner_recipe_reg,
+    treatment = "treatment",
+    tune_params = list(mtry = 2, trees = 120, min_n = 10),
+    policy = TRUE,
+    policy_method = "tree"
+  )
+
+  # Test if output is a list
+  expect_s3_class(s_fit_rf_tree$policy_details, "list")
+  expect_s3_class(s_fit_rf_greedy$policy_details, "list")
+
+  # Test the structure of the output
+  expect_named(s_fit_rf_tree$policy_details,expected = c("best_threshold","best_gain","policy_vector","gain_curve"))
+  expect_named(s_fit_rf_greedy$policy_details,expected = c("policy_tree_model","best_gain","policy_vector"))
 
 })
 
