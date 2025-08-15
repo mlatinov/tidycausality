@@ -312,22 +312,22 @@ s_learner <- function(
   # Outcome for classification problems
   if (mode == "classification") {
     # Predict prob on the counterfactual data
-    y1_prob <- predict(model_fit,new_data = data_1,type = "prob")[,2]
-    y0_prob <- predict(model_fit,new_data = data_0,type = "prob")[,2]
+    y1_prob <- predict(model_fit,new_data = data_1,type = "prob")$.pred_1
+    y0_prob <- predict(model_fit,new_data = data_0,type = "prob")$.pred_1
 
     # Calculate effects
-    rd      <- mean(y1_prob - y0_prob)               # RD (Risk Diffrence)
-    rr      <- mean(y1_prob) / mean(y0_prob)         # RR (Relative Risk)
-    rr_star <- (1 - y0_prob) / (1 - y1_prob)         # RR* (Adjusted relative risk)
+    rd      <- mean(y1_prob - y0_prob)                   # RD (Risk Diffrence)
+    rr      <- mean(y1_prob) / mean(y0_prob)             # RR (Relative Risk)
+    rr_star <- (1 - mean(y0_prob)) / (1 - mean(y1_prob)) # RR* (Adjusted relative risk)
     or      <- (mean(y1_prob) / (1 - mean(y1_prob))) /
-               (mean(y0_prob) / (1 - mean(y0_prob))) # OR (Odds Ration)
-    nnt     <- 1 / rd                                # NNT (Number Needed to Treat)
-    ate     <- mean(y1_prob - y_0prob)               # ATE (Average Treatment Effect)
-    tau_s   <- y1_prob - y0_prob                     # Individual Effect
-    att     <- mean(tau_s[data[[treatment]]==1])     # ATT (Average Treatment effect on Treated)
-    atc     <- mean(tau_s[data[[treatment]]==0])     # ATC (Average Treatment effect on Control)
-    pns     <- mean(y1_prob * (1 - y0_prob))         # PNS (Probability of Necessity and Sufficiency)
-    pn      <- pns / mean(y1_prob)                   # PN (Probability of Necessity)
+               (mean(y0_prob) / (1 - mean(y0_prob)))     # OR (Odds Ration)
+    nnt     <- 1 / rd                                    # NNT (Number Needed to Treat)
+    ate     <- mean(y1_prob - y0_prob)                   # ATE (Average Treatment Effect)
+    tau_s   <- y1_prob - y0_prob                         # Individual Effect
+    att     <- mean(tau_s[data[[treatment]]==1])         # ATT (Average Treatment effect on Treated)
+    atc     <- mean(tau_s[data[[treatment]]==0])         # ATC (Average Treatment effect on Control)
+    pns     <- mean(y1_prob * (1 - y0_prob))             # PNS (Probability of Necessity and Sufficiency)
+    pn      <- pns / mean(y1_prob)                       # PN (Probability of Necessity)
 
     # Return a list with Effects
     effect_measures <- list(
@@ -353,10 +353,12 @@ s_learner <- function(
     # Compute tau
     tau_s <- y1 - y0
 
+    # Bind tau to the data
+    data$tau <- tau_s
     # Calculate effects
-    ate <- mean(tau)                       # ATE (Average Treatment Effect)
-    atc <- mean(tau[data[treatment == 0]]) # ATC (Average Treatment effect on Control)
-    atc <- mean(tau[data[treatment == 0]]) # ATT (Average Treatment effect on Treated)
+    ate <- mean(tau_s)                                                                       # ATE (Average Treatment Effect)
+    atc <- data %>% filter(treatment == 0) %>% summarise(atc = mean(tau_s)) %>% as.numeric() # ATC (Average Treatment effect on Control)
+    att <- data %>% filter(treatment == 1) %>% summarise(att = mean(tau_s)) %>% as.numeric() # ATT (Average Treatment effect on Treated)
 
     # Return a list with Effects
     effect_measures <- list(
@@ -393,8 +395,8 @@ s_learner <- function(
         # Fit model on bootstrap sample
         boot_fit <- fit(model_workflow, data = data[boot_idx, ])
         # Predict on counterfactual data
-        boot_y1[, i] <- predict(boot_fit, new_data = data_1, type = "prob")$.pred
-        boot_y0[, i] <- predict(boot_fit, new_data = data_0, type = "prob")$.pred
+        boot_y1[, i] <- predict(boot_fit, new_data = data_1, type = "prob")$.pred_1
+        boot_y0[, i] <- predict(boot_fit, new_data = data_0, type = "prob")$.pred_1
       }
 
       # Compute individual treatment effect (tau)
@@ -423,9 +425,6 @@ s_learner <- function(
 
       # Compute CIs for all measures
       effect_measures_boots <- list(
-        y1_pred = boot_y1,
-        y0_pred = boot_y0,
-        ITE = boot_tau,
         ATE = c(estimate = mean(ate_boot, na.rm = TRUE),
                 ci(ate_boot, alpha = bootstrap_alpha)),
         ATT = c(estimate = mean(att_boot, na.rm = TRUE),
@@ -459,9 +458,6 @@ s_learner <- function(
         boot_idx <- sample(nrow(data), replace = TRUE)
         # Fit the model on a bootsrap sample
         boot_fit <- parsnip::fit(model_workflow, data = data[boot_idx, ])
-        # Predict on a bootstrap sample
-        boot_y1 <- predict(boot_fit, new_data = data_1)$.pred
-        boot_y0 <- predict(boot_fit, new_data = data_0)$.pred
         # Predict on counterfactual data
         boot_y1[, i] <- predict(boot_fit, new_data = data_1)$.pred
         boot_y0[, i] <- predict(boot_fit, new_data = data_0)$.pred
@@ -476,14 +472,12 @@ s_learner <- function(
 
       # Compute CIs for all measures
       effect_measures_boots <- list(
-        y1_pred = boot_y1,
-        y0_pred = boot_y0,
-        ITE = boot_tau,
         ATE = c(estimate = mean(ate_boot, na.rm = TRUE),
                 ci(ate_boot, alpha = bootstrap_alpha)),
         ATT = c(estimate = mean(att_boot, na.rm = TRUE),
                 ci(att_boot, alpha = bootstrap_alpha)),
-        ATC = c(estimate = mean(atc_boot, na.rm = TRUE))
+        ATC = c(estimate = mean(atc_boot, na.rm = TRUE),
+                ci(atc_boot,alpha = bootstrap_alpha))
         )
       }
   }
@@ -513,7 +507,7 @@ s_learner <- function(
 
       # Gain Curve
       gain_df <- data.frame(thresholds = thresholds,gain = gains)
-      gain_plot <- ggplot(gain_df, aes(x = threshold, y = gain)) +
+      gain_plot <- ggplot(gain_df, aes(x = thresholds, y = gain)) +
         geom_line(color = "steelblue", linewidth = 1) +
         geom_point(aes(x = best_threshold, y = best_gain), color = "red", size = 3) +
         labs(
@@ -528,46 +522,19 @@ s_learner <- function(
         best_gain = best_gain,
         policy_vector = policy_vector,
         gain_curve = gain_plot
-      )
-    }else if(policy_method == "tree"){
-      # Apply the preproc from recipe to the data
-      prep_recipe <- prep(recipe,data)
-      data_tree <- bake(prep_recipe,data)
-
-      # Remove the threatment Variable from the data_tree and convert it to matrix
-      data_tree <- as.matrix(data_tree[, setdiff(names(data_tree), treatment)])
-
-      # Fit a policy tree
-      policy_tree <- policy_tree(
-        X = data_tree,
-        Gamma = tau_s,
-        depth = 2,
-        min.node.size = 1,
-        verbose = FALSE
-      )
-
-      # Subset the policy tree to take policy vector
-      policy_vector <- policy_tree$policy
-      policy_gain <- sum(tau_s * policy_vector)
-
-      # Output policy details
-      policy_details <- list(
-        policy_tree_model = policy_tree,
-        best_gain = policy_gain,
-        policy_vector = policy_vector
-      )
-
+        )
+      }
     }
-  }
   # Object structure
   structure(
     list(
       base_model = base_spec,
+      treatment = treatment,
       model_fit = model_fit,
       effect_measures = effect_measures,
-      effect_measures_boots = effect_measures_boots,
-      modeling_results  = modeling_results,
-      policy_details = policy_details
+      effect_measures_boots = if(bootstrap) effect_measures_boots else NULL,
+      modeling_results  = if("tune()" %in% tune_params) modeling_results else NULL,
+      policy_details = if(policy) policy_details else NULL
     ),
     class = "s_learner"
   )
@@ -594,33 +561,138 @@ s_learner <- function(
 #' }
 #'
 #' @export
-predict.s_learner <- function(object,new_data,treatment) {
+predict.s_learner <- function(object,new_data,policy = FALSE,policy_method = NULL) {
+
+  # Extract the treatment name
+  treatment_name <- object$treatment
+
+  # Build counterfactual datasets
+  data_1 <- new_data %>%
+    dplyr::mutate(!!rlang::sym(treatment_name) := factor(1))
+
+  data_0 <- new_data %>%
+    dplyr::mutate(!!rlang::sym(treatment_name) := factor(0))
+
   # Extract the fitted model from the object
   model_fit <- object$model_fit
 
-  # Build counterfactual datasets
-  data_1_new <- new_data %>%
-    dplyr::mutate(!!rlang::sym(treatment) := factor(1))
+  # Determine the mode from the model_fit
+  mode <- model_fit$fit$fit$spec$mode
 
-  data_0_new <- new_data %>%
-    dplyr::mutate(!!rlang::sym(treatment) := factor(0))
+  # Check the mode and predict on the new_data with the correct estimates
+  if (mode == "classification") {
 
-  # Predict potential outcomes
-  y1 <- predict(model_fit, new_data = data_1_new)$.pred
-  y0 <- predict(model_fit, new_data = data_0_new)$.pred
+    # Predict prob on the counterfactual data
+    y1_prob <- predict(model_fit,new_data = data_1,type = "prob")$.pred_1
+    y0_prob <- predict(model_fit,new_data = data_0,type = "prob")$.pred_1
 
-  # Estimate treatment effect
-  tau_s <- y1 - y0
+    # Calculate effects
+    rd      <- mean(y1_prob - y0_prob)                   # RD (Risk Diffrence)
+    rr      <- mean(y1_prob) / mean(y0_prob)             # RR (Relative Risk)
+    rr_star <- (1 - mean(y0_prob)) / (1 - mean(y1_prob)) # RR* (Adjusted relative risk)
+    or      <- (mean(y1_prob) / (1 - mean(y1_prob))) /
+      (mean(y0_prob) / (1 - mean(y0_prob)))     # OR (Odds Ration)
+    nnt     <- 1 / rd                                    # NNT (Number Needed to Treat)
+    ate     <- mean(y1_prob - y0_prob)                   # ATE (Average Treatment Effect)
+    tau_s   <- y1_prob - y0_prob                         # Individual Effect
+    att     <- mean(tau_s[new_data[[treatment_name]]==1])     # ATT (Average Treatment effect on Treated)
+    atc     <- mean(tau_s[new_data[[treatment_name]]==0])     # ATC (Average Treatment effect on Control)
+    pns     <- mean(y1_prob * (1 - y0_prob))             # PNS (Probability of Necessity and Sufficiency)
+    pn      <- pns / mean(y1_prob)                       # PN (Probability of Necessity)
 
-  # Return as a tibble
-  return(
-    tibble::tibble(
-      .tau    = tau_s,
-      .pred_1 = y1,
-      .pred_0 = y0
+    # Return a list with Effects
+    effect_measures <- list(
+      y1_prob = y1_prob, # Predicted prob for Y = 1
+      y0_prob = y0_prob, # Predicted prob for Y = 0
+      RD = rd,      # Risk Diffrence
+      RR = rr,      # Relative Risk
+      OR = or,      # Odds Ration
+      RR_star = rr, # Adjusted relative risk
+      NNT = nnt,    # Number Needed to Treat
+      ITE = tau_s,  # Individual Effect
+      ATE = ate,    # Average Treatment Effect
+      ATT = att,    # Average Treatment effect on Treated
+      ATC = atc,    # Average Treatment effect on Control
+      PNS = pns,    # Probability of Necessity and Sufficiency
+      PN = pn       # Probability of Necessity
     )
-  )
+    # otherwise retrun a regression estimates
+  }else{
+    # Predict on the counterfactual data
+    y1 <- predict(model_fit, new_data = data_1)$.pred
+    y0 <- predict(model_fit, new_data = data_0)$.pred
+    # Compute tau
+    tau_s <- y1 - y0
+
+    # Bind tau to the data
+    new_data$tau <- tau_s
+    # Calculate effects
+    ate <- mean(tau_s)                                                                           # ATE (Average Treatment Effect)
+    atc <- new_data %>% filter(treatment_name == 0) %>% summarise(atc = mean(tau_s)) %>% as.numeric() # ATC (Average Treatment effect on Control)
+    att <- new_data %>% filter(treatment_name == 1) %>% summarise(att = mean(tau_s)) %>% as.numeric() # ATT (Average Treatment effect on Treated)
+
+    # Return a list with Effects
+    effect_measures <- list(
+      y1_prob = y1,  # Predicted prob for Y = 1
+      y0_prob = y0,  # Predicted prob for Y = 0
+      ITE = tau_s, # Individual effect
+      ATE = ate,   # Average Treatment Effect
+      ATT = att,   # Average Treatment effect on Treated
+      ATC = atc    # Average Treatment effect on Control
+    )
+  }
+  # Policy Implementation
+  if (policy) {
+    # Greedy policy
+    if (policy_method == "greedy") {
+      # Greedy policy function to compute gains and policy vec
+      greedy_policy <- function(threshold, tau) {
+        policy_vec <- ifelse(tau > threshold, 1, 0)
+        gain <- sum(tau * policy_vec)
+        return(gain)
+      }
+      # Set 50 thresholds from min to max tau
+      thresholds <- seq(min(tau_s), max(tau_s), length.out = 50)
+
+      # Compute gains for each threshold
+      gains <- sapply(thresholds, greedy_policy, tau = tau_s)
+
+      # Find the best threshold and corresponding gain
+      best_idx <- which.max(gains)
+      best_threshold <- thresholds[best_idx]
+      best_gain <- gains[best_idx]
+
+      # Compute policy vector for the best threshold
+      policy_vector <- ifelse(tau_s > best_threshold, 1, 0)
+
+      # Gain Curve
+      gain_df <- data.frame(thresholds = thresholds,gain = gains)
+      gain_plot <- ggplot(gain_df, aes(x = thresholds, y = gain)) +
+        geom_line(color = "steelblue", linewidth = 1) +
+        geom_point(aes(x = best_threshold, y = best_gain), color = "red", size = 3) +
+        labs(
+          title = "Greedy Policy Gain Curve",
+          subtitle =
+            paste0("Best Threshold = ", round(best_threshold, 4), ", Gain = ", round(best_gain, 4)),x = "Threshold", y = "Total Gain") +
+        theme_minimal()
+
+      # Output policy details
+      policy_details <- list(
+        best_threshold = best_threshold,
+        best_gain = best_gain,
+        policy_vector = policy_vector,
+        gain_curve = gain_plot
+      )
+    }
+  }
+  # Return list with estimates
+  return(list(
+    effect_measures = effect_measures,
+    policy_details = if(policy) policy_details else NULL
+  ))
 }
+
+
 
 
 
