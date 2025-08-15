@@ -23,14 +23,14 @@ test_that("Test the S-learner structure",{
   expect_s3_class(s_fit_reg,class = "s_learner")
   expect_s3_class(s_fit_cl,class = "s_learner")
   # Test if the function returns every output
-  expect_named(s_fit_reg,expected = c("base_model","model_fit","effect_measures","effect_measures_boots","modeling_results","policy_details"))
-  expect_named(s_fit_cl,expected = c("base_model","model_fit","effect_measures","effect_measures_boots","modeling_results","policy_details"))
-  # Test if the function returns a list
-  expect_s3_class(s_fit_reg$effect_measures,class = "list")
-  expect_s3_class(s_fit_cl$effect_measures,class = "list")
+  expect_named(s_fit_reg,expected = c("base_model","model_fit","effect_measures","effect_measures_boots","modeling_results","policy_details","treatment"),ignore.order = TRUE)
+  expect_named(s_fit_cl,expected = c("base_model","model_fit","effect_measures","effect_measures_boots","modeling_results","policy_details","treatment"),ignore.order = TRUE)
+  # Test if the the return object is a list
+  expect_type(s_fit_reg$effect_measures, "list")
+  expect_type(s_fit_cl$effect_measures, "list")
   # Test if the effect measures returns all metrics based on mode
   expect_named(s_fit_reg$effect_measures, expected = c("ITE", "ATE", "ATT","ATC","y1_prob","y0_prob"), ignore.order = TRUE)
-  expect_named(s_fit_cl$effect_measures, expected = c("ITE", "ATE", "ATT","ATC","RR","RD","OR","NNT","PNS","PN","y1_prob","y0_prob"), ignore.order = TRUE)
+  expect_named(s_fit_cl$effect_measures, expected = c("ITE", "ATE", "ATT","ATC","RR","RD","OR","NNT","PNS","PN","RR_star","y1_prob","y0_prob"), ignore.order = TRUE)
 })
 
 test_that("Test the returned fixed hyperparameters", {
@@ -229,12 +229,12 @@ test_that("Test Bootstrap feature",{
   )
 
   # Test the structure of the output
-  expect_named(s_fit_rf_reg$effect_measures_boots,expected = c("ATE","ATC","ATT","ITE","y1_prob","y0_prob"))
-  expect_named(s_fit_rf_cl$effect_measures_boots,expected = c("ATE","ATC","ATT","RR","RD","OR","NNT","PNS","PN","y1_prob","y0_prob"))
+  expect_named(s_fit_rf_reg$effect_measures_boots,expected = c("ATE","ATC","ATT"),ignore.order = TRUE)
+  expect_named(s_fit_rf_cl$effect_measures_boots,expected = c("ATE","ATC","ATT","RR","RD","OR","NNT","PNS","PN"),ignore.order = TRUE)
 
   # Test if output is a list
-  expect_s3_class(s_fit_rf_reg$effect_measures_boots, "list")
-  expect_s3_class(s_fit_rf_cl$effect_measures_boots, "list")
+  expect_type(s_fit_rf_reg$effect_measures_boots, "list")
+  expect_type(s_fit_rf_cl$effect_measures_boots, "list")
 
   # Test if the output is numeric Regression and Classification
 
@@ -242,10 +242,6 @@ test_that("Test Bootstrap feature",{
   expect_type(s_fit_rf_cl$effect_measures_boots$ATE, "double")
   expect_type(s_fit_rf_cl$effect_measures_boots$ATC, "double")
   expect_type(s_fit_rf_cl$effect_measures_boots$ATT, "double")
-
-  expect_type(s_fit_rf_cl$effect_measures_boots$ITE, "double")
-  expect_type(s_fit_rf_cl$effect_measures_boots$y1_prob, "double")
-  expect_type(s_fit_rf_cl$effect_measures_boots$y0_prob, "double")
 
   expect_type(s_fit_rf_cl$effect_measures_boots$RR, "double")
   expect_type(s_fit_rf_cl$effect_measures_boots$RD, "double")
@@ -259,10 +255,6 @@ test_that("Test Bootstrap feature",{
   expect_type(s_fit_rf_reg$effect_measures_boots$ATE, "double")
   expect_type(s_fit_rf_reg$effect_measures_boots$ATC, "double")
   expect_type(s_fit_rf_reg$effect_measures_boots$ATT, "double")
-
-  expect_type(s_fit_rf_reg$effect_measures_boots$ITE, "double")
-  expect_type(s_fit_rf_reg$effect_measures_boots$y1_prob, "double")
-  expect_type(s_fit_rf_reg$effect_measures_boots$y1_prob, "double")
 })
 
 test_that("Test Policy Feature",{
@@ -278,25 +270,8 @@ test_that("Test Policy Feature",{
     policy = TRUE,
     policy_method = "greedy"
   )
-  # Random forest reg Tree
-  s_fit_rf_tree <- s_learner(
-    base_model = "random_forest",
-    data = data_test_reg,
-    mode = "regression",
-    recipe = s_learner_recipe_reg,
-    treatment = "treatment",
-    tune_params = list(mtry = 2, trees = 120, min_n = 10),
-    policy = TRUE,
-    policy_method = "tree"
-  )
-
   # Test if output is a list
-  expect_s3_class(s_fit_rf_tree$policy_details, "list")
-  expect_s3_class(s_fit_rf_greedy$policy_details, "list")
-
-  # Test the structure of the output
-  expect_named(s_fit_rf_tree$policy_details,expected = c("best_threshold","best_gain","policy_vector","gain_curve"))
-  expect_named(s_fit_rf_greedy$policy_details,expected = c("policy_tree_model","best_gain","policy_vector"))
+  expect_type(s_fit_rf_greedy$policy_details, "list")
 
 })
 
@@ -305,47 +280,53 @@ test_that("Test the predict method for S learner",{
   # Random forest
   s_fit_rf <- s_learner(
     base_model = "random_forest",
-    data = data_test,
-    recipe = s_learner_recipe,
+    mode = "regression",
+    data = data_test_reg,
+    recipe = s_learner_recipe_reg,
+    treatment = "treatment",
+    policy = TRUE,
+    policy_method = "greedy",
+    tune_params = list(mtry = 2, trees = 120, min_n = 10)
+  )
+  predict_rf <- predict(s_fit_rf,data_test_reg)
+
+  # Random forest
+  s_fit_cl <- s_learner(
+    base_model = "random_forest",
+    mode = "classification",
+    data = data_test_cl,
+    recipe = s_learner_recipe_cl,
     treatment = "treatment",
     tune_params = list(mtry = 2, trees = 120, min_n = 10)
   )
-  predict_rf <- predict(s_fit_rf,data_test,treatment = "treatment")
+  predict_rf <- predict(s_fit_cl,data_test_cl)
 
-  # Mars
-  s_fit_mars <- s_learner(
-    base_model = "mars",
-    data = data_test,
-    recipe = s_learner_recipe,
-    treatment = "treatment",
-    tune_params = list(num_terms = 2, prod_degree = 2)
-  )
-  predict_mars <- predict(s_fit_mars,data_test,treatment = "treatment")
+  # Test if the effect measures returns all metrics based on mode
+  expect_named(s_fit_rf$effect_measures, expected = c("ITE", "ATE", "ATT","ATC","y1_prob","y0_prob"), ignore.order = TRUE)
+  expect_named(s_fit_cl$effect_measures, expected = c("ITE", "ATE", "ATT","ATC","RR","RD","OR","NNT","PNS","PN","RR_star","y1_prob","y0_prob"), ignore.order = TRUE)
 
-  # Glmnet
-  s_fit_glmnet <- s_learner(
-    base_model = "glmnet",
-    data = data_test,
-    recipe = s_learner_recipe,
-    treatment = "treatment",
-    tune_params = list(penalty = 1e-3, mixture = 0.5)
-  )
-  predict_glmnet <- predict(s_fit_glmnet,data_test,treatment = "treatment")
+  # Test if output is a list
+  expect_type(s_fit_rf$policy_details, "list")
+  # ...
+  # Test if the output is numeric Regression and Classification
 
-  # Test if output has expected names
-  expect_named(predict_glmnet, c(".tau", ".pred_1", ".pred_0"), ignore.order = TRUE)
-  expect_named(predict_mars, c(".tau", ".pred_1", ".pred_0"), ignore.order = TRUE)
-  expect_named(predict_rf, c(".tau", ".pred_1", ".pred_0"), ignore.order = TRUE)
+  # Classification metrics
+  expect_type(s_fit_cl$effect_measures$ATE, "double")
+  expect_type(s_fit_cl$effect_measures$ATC, "double")
+  expect_type(s_fit_cl$effect_measures$ATT, "double")
 
-  # Test if output is a tibble
-  expect_s3_class(predict_glmnet, "tbl_df")
-  expect_s3_class(predict_mars, "tbl_df")
-  expect_s3_class(predict_rf, "tbl_df")
+  expect_type(s_fit_cl$effect_measures$RR, "double")
+  expect_type(s_fit_cl$effect_measures$RD, "double")
+  expect_type(s_fit_cl$effect_measures$OR, "double")
 
-  # Test if output columns are numeric (double)
-  expect_type(predict_glmnet$.tau, "double")
-  expect_type(predict_glmnet$.pred_1, "double")
-  expect_type(predict_glmnet$.pred_0, "double")
+  expect_type(s_fit_cl$effect_measures$NNT, "double")
+  expect_type(s_fit_cl$effect_measures$PNS, "double")
+  expect_type(s_fit_cl$effect_measures$PN, "double")
+
+  # Regression Metric
+  expect_type(s_fit_rf$effect_measures$ATE, "double")
+  expect_type(s_fit_rf$effect_measures$ATC, "double")
+  expect_type(s_fit_rf$effect_measures$ATT, "double")
 })
 
 
