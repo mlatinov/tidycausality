@@ -691,19 +691,221 @@ predict.s_learner <- function(object,new_data,policy = FALSE,policy_method = NUL
     policy_details = if(policy) policy_details else NULL
   ))
 }
+#' Summarize an S-learner Fit
+#'
+#' @description
+#' Produces a summary of an S-learner fit, including treatment effect
+#' estimates, bootstrap-based inference (if available), and optional
+#' policy evaluation results.
+#'
+#' @param object An object of class \code{"s_learner"} created by
+#'   \code{\link{s_learner}}.
+#'
+#' @details
+#' The summary includes different components depending on the
+#' learning mode:
+#'
+#' - **Regression mode**: Returns ATE, ATT, and ATC.
+#' - **Classification mode**: Returns ATE, ATT, ATC as well as
+#'   causal effect measures including Risk Ratio (RR), Risk Difference (RD),
+#'   Odds Ratio (OR), Number Needed to Treat (NNT), Probability of Necessity
+#'   and Sufficiency (PNS), and Probability of Necessity (PN).
+#'
+#' If bootstrap estimates were computed during fitting, those are
+#' returned instead of point estimates.
+#'
+#' If policy evaluation was performed during fitting, the summary
+#' also includes the best decision threshold and associated gain.
+#'
+#' @return
+#' An object of class \code{"summary.s_learner"} containing:
+#' \item{mode}{The mode of the model ("regression" or "classification").}
+#' \item{bootstrap_mode}{Logical, whether bootstrap estimates are used.}
+#' \item{estimates}{A list of effect measure estimates.}
+#' \item{policy_mode}{Logical, whether policy evaluation results are included.}
+#' \item{policy_details}{Policy details (threshold, gain) if available.}
+#'
+#' @seealso \code{\link{print.summary.s_learner}}, \code{\link{predict.s_learner}}
+#'@export
+summary.s_learner <- function(object){
 
+  # Export the mode decided based on the model
+  mode <- object$base_model$mode
+  # Export bootstrap based on the
+  bootstrap <- object$effect_measures_boots
+  # Extract the effect measures without bootstrap
+  effect_measures <- object$effect_measures
+  # Export policy
+  policy <- object$policy_details
+  # Check for mode classification and then check if bootstrap version exist
+  if (mode == "classification") {
+    # Check if bootstrap version exists
+    if (!is.null(bootstrap)) {
+      # Return the effect messures
+      res <- list(
+        ATE = bootstrap$ATE,
+        ATT = bootstrap$ATT,
+        ATC = bootstrap$ATC,
+        RR  = bootstrap$RR,
+        RD  = bootstrap$RD,
+        OR  = bootstrap$OR,
+        NNT = bootstrap$NNT,
+        PNS = bootstrap$PNS,
+        PN  = bootstrap$PN
+      )
+    # Return effect measures without bootstrap
+    }else{
+      res <- list(
+        ATE = effect_measures$ATE,
+        ATT = effect_measures$ATT,
+        ATC = effect_measures$ATC,
+        RR  = effect_measures$RR,
+        RD  = effect_measures$RD,
+        OR  = effect_measures$OR,
+        NNT = effect_measures$NNT,
+        PNS = effect_measures$PNS,
+        PN  = effect_measures$PN
+      )
+    }
+    # Check for mode regression and then check if bootstrap version exist
+  }else if(mode == "regression"){
+    # Check if bootstrap version exist
+    if (!is.null(bootstrap)) {
+      # Return bootstrap effect measures for regression
+      res <- list(
+       ATE = bootstrap$ATE,
+       ATT = bootstrap$ATT,
+       ATC = bootstrap$ATC
+       )
+      # If bootstrap is NULL return the effect_measures for regression
+    }else{
+      res <- list(
+        ATE = effect_measures$ATE,
+        ATT = effect_measures$ATT,
+        ATC = effect_measures$ATC
+        )
+      }
+    }
+  # If policy is not null return policy
+  if (!is.null(policy)) {
+    policy <- list(
+      threshold = best_threshold,
+      gain = best_gain
+    )
+  }
+  # Return as a summary object with class
+  structure(
+    list(
+      mode      = mode,
+      bootstrap_mode = !is.null(bootstrap),
+      estimates = res,
+      policy_mode = !is.null(policy),
+      policy_details = if(!is.null(policy)) policy else NULL
+    ),
+    class = "summary.s_learner"
+  )
+}
+#' Print Method for S-learner Summaries
+#'
+#' @description
+#' Custom print method for objects of class \code{"summary.s_learner"}.
+#' Displays key effect measures and additional details (e.g., bootstrap and
+#' policy information) in a clean, human-readable format.
+#'
+#' @param x An object of class \code{"summary.s_learner"} created by
+#'   \code{summary.s_learner()}.
+#' @param ... Additional arguments passed to or from other methods (ignored).
+#'
+#' @details
+#' The output differs depending on whether the underlying model is in
+#' \code{"regression"} or \code{"classification"} mode:
+#'
+#' - For **regression**, only the ATE, ATT, and ATC are displayed.
+#' - For **classification**, additional causal effect measures are displayed,
+#'   including the Risk Ratio (RR), Risk Difference (RD), Odds Ratio (OR),
+#'   Number Needed to Treat (NNT), Probability of Necessity and Sufficiency (PNS),
+#'   and Probability of Necessity (PN).
+#'
+#' If policy evaluation was performed during fitting, policy details (best
+#' threshold and gain) are also displayed.
+#'
+#' @return
+#' Prints a formatted summary to the console and (invisibly) returns the input
+#' object \code{x}.
+#'
+#' @seealso \code{\link{summary.s_learner}}, \code{\link{predict.s_learner}}
+#'
+#'@export
+print.summary.s_learner <- function(object, ...) {
 
+  cat("S Learner Summary\n")
+  cat("----------------\n")
+  cat("Mode      :", object$mode, "\n")
+  cat("Bootstrap :", ifelse(object$bootstrap_mode, "Yes", "No"), "\n")
+  cat("Policy    :", ifelse(object$policy_mode, "Yes", "No"), "\n\n")
 
+  # Define measure names depending on mode
+  if (object$mode == "regression") {
+    measure_labels <- c(
+      "Average Treatment Effect (ATE)",
+      "Average Treatment Effect on Treated (ATT)",
+      "Average Treatment Effect on Control (ATC)"
+    )
+  } else if (object$mode == "classification") {
+    measure_labels <- c(
+      "Average Treatment Effect (ATE)",
+      "Average Treatment Effect on Treated (ATT)",
+      "Average Treatment Effect on Control (ATC)",
+      "Risk Ratio (RR)",
+      "Risk Difference (RD)",
+      "Odds Ratio (OR)",
+      "Number Needed to Treat (NNT)",
+      "Probability of Necessity & Sufficiency (PNS)",
+      "Probability of Necessity (PN)"
+    )
+  }
 
+  estimates <- object$estimates
+  is_bootstrap <- object$bootstrap_mode
 
+  # compute max width for labels
+  max_label_width <- max(nchar(measure_labels))
 
+  cat("Effect Measures:\n")
 
+  if (is_bootstrap) {
+    # Header for bootstrap
+    cat(sprintf("%-*s   %8s %8s %8s\n",
+                max_label_width, "", "Estimate", "Lower", "Upper"))
+  } else {
+    # Header for normal (just one column)
+    cat(sprintf("%-*s   %8s\n",
+                max_label_width, "", "Estimate"))
+  }
 
+  for (i in seq_along(measure_labels)) {
+    label <- measure_labels[i]
+    measure_name <- names(estimates)[i]
 
+    if (is_bootstrap) {
+      vals <- estimates[[measure_name]]
+      cat(sprintf("  %-*s : % .6f % .6f % .6f\n",
+                  max_label_width, label, vals["estimate"], vals["lower"], vals["upper"]))
+    } else {
+      val <- estimates[[measure_name]]
+      cat(sprintf("  %-*s : % .6f\n",
+                  max_label_width, label, val))
+    }
+  }
 
+  # Policy details if present
+  if (object$policy_mode && !is.null(object$policy_details)) {
+    cat("\nPolicy Details:\n")
+    cat("  Best Threshold Found    :", object$policy_details$threshold, "\n")
+    cat("  Gain for this Threshold :", object$policy_details$gain, "\n")
+  }
 
-
-
-
+  invisible(object)
+}
 
 
