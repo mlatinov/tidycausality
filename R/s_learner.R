@@ -530,6 +530,7 @@ s_learner <- function(
     list(
       base_model = base_spec,
       treatment = treatment,
+      data = data,
       model_fit = model_fit,
       effect_measures = effect_measures,
       effect_measures_boots = if(bootstrap) effect_measures_boots else NULL,
@@ -591,7 +592,7 @@ predict.s_learner <- function(object,new_data,policy = FALSE,policy_method = NUL
     rr      <- mean(y1_prob) / mean(y0_prob)             # RR (Relative Risk)
     rr_star <- (1 - mean(y0_prob)) / (1 - mean(y1_prob)) # RR* (Adjusted relative risk)
     or      <- (mean(y1_prob) / (1 - mean(y1_prob))) /
-      (mean(y0_prob) / (1 - mean(y0_prob)))     # OR (Odds Ration)
+      (mean(y0_prob) / (1 - mean(y0_prob)))              # OR (Odds Ration)
     nnt     <- 1 / rd                                    # NNT (Number Needed to Treat)
     ate     <- mean(y1_prob - y0_prob)                   # ATE (Average Treatment Effect)
     tau_s   <- y1_prob - y0_prob                         # Individual Effect
@@ -907,5 +908,184 @@ print.summary.s_learner <- function(object, ...) {
 
   invisible(object)
 }
+
+
+autoplot.s_learner <- function(object,
+                               type = c("forest","histogram","line","cumulative","radar"),
+                               group = NULL,
+                               covariate = NULL
+                               ){
+
+  # Take the data from the model and combine it with the effect measures
+  data_plots <- cbind(
+    as.data.frame(s_fit_cl$effect_measures),
+    s_fit_cl$data
+  )
+
+  # Density plot
+  plot_density <- function(data, group = NULL, bw = "nrd0") {
+
+    if (!is.null(group)) {
+      # Grouped density
+      p_density <- ggplot(data, aes(x = ITE, fill = as.factor(.data[[group]]))) +
+        geom_density(alpha = 0.6, position = "identity", bw = bw) +
+        scale_fill_viridis_d(option = "A") +
+        geom_vline(xintercept = 0, color = "black", linetype = "dashed") +
+        labs(
+          x = "Estimated ITE",
+          y = "Density",
+          title = paste0("Density of Estimated ITE by ", group),
+          fill = group
+        ) +
+        theme_minimal(base_size = 14) +
+        theme(
+          legend.position = "top",
+          legend.title = element_text(face = "italic"),
+          plot.title = element_text(face = "italic")
+        )
+    } else {
+      # Overall density
+      p_density <- ggplot(data, aes(x = ITE)) +
+        geom_density(fill = viridis::viridis(1, option = "B", begin = 0.4, end = 0.8),
+                     alpha = 0.7, bw = bw) +
+        geom_vline(xintercept = 0, color = "black", linetype = "dashed") +
+        labs(
+          x = "Estimated ITE",
+          y = "Density",
+          title = "Overall Density of Estimated ITE"
+        ) +
+        theme_minimal(base_size = 14) +
+        theme(
+          plot.title = element_text(face = "italic"),
+          legend.position = "none"
+        )
+    }
+    return(p_density)
+  }
+  # Cumulative Average Effect Plot
+  plot_cae <- function(data, group = NULL) {
+
+    # Prepare the data by ranking it and calc the cumulative ITE
+    data <- data %>%
+      arrange(desc(ITE))%>%
+      mutate(
+        rank = row_number() / n(),
+        cumulative = cumsum(ITE) / row_number()
+      )
+    if (!is.null(group)) {
+      p_cae <- ggplot(data, aes(x = rank, y = cumulative, color = .data[[group]])) +
+        geom_point(size = 2, alpha = 0.7) +
+        geom_line(alpha = 0.8) +
+        facet_wrap(as.formula(paste("~", group)), scales = "free_y") +
+        labs(
+          x = "Rank",
+          y = "Cumulative",
+          title = paste("Cumulative Curve by", group)
+        ) +
+        theme_minimal(base_size = 14)+
+        theme(legend.position = "none")
+    } else {
+      p_cae <- ggplot(data, aes(x = rank, y = cumulative)) +
+        geom_point(size = 2, alpha = 0.7, color = "#440154FF") +
+        geom_line(alpha = 0.8, color = "#440154FF") +
+        labs(
+          x = "Rank",
+          y = "Cumulative",
+          title = "Cumulative Curve"
+        ) +
+        theme_minimal(base_size = 14)+
+        theme(legend.position = "none")
+    }
+    return(p_cae)
+  }
+  # Forest Plot
+  plot_forest <- function(data, group = NULL) {
+
+    if (!is.null(group)) {
+      data_summary <- data %>%
+        group_by(.data[[group]]) %>%
+        summarise(
+          mean_ite = mean(ITE, na.rm = TRUE),
+          n = n(),
+          .groups = "drop")
+
+      p_forest <- ggplot(data_summary, aes(x = as.factor(group), y = mean_ite)) +
+        geom_point(size = 3) +
+        coord_flip() +
+        geom_hline(yintercept = 0, linetype = "dashed") +
+        labs(
+          title = paste0("Forest Plot by" , group ,collapse = ","),
+          x = group,
+          y = "Mean ITE"
+        ) +
+        theme_minimal(base_size = 14)
+
+    } else {
+      data <- data %>%
+        arrange(desc(ITE)) %>%
+        mutate(id = row_number())
+
+      p_forest <- ggplot(data, aes(x = id, y = ITE)) +
+        geom_point(size = 2, color = "#440154FF") +
+        coord_flip() +
+        geom_hline(yintercept = 0, linetype = "dashed") +
+        labs(
+          x = "Observation",
+          y = "Point Estimate ITE",
+          title = "Forest Plot of ITE"
+        ) +
+        theme_minimal(base_size = 14)
+    }
+    return(p_forest)
+  }
+  # Radar Plot function
+  plot_radar <- function(data = data_plots, group = NULL){
+
+    radar_long <- data %>%
+      select({{group}}, RD, PN, PNS) %>%
+      pivot_longer(-{{group}}, names_to = "measure", values_to = "value") %>%
+      mutate(measure = factor(measure, levels = c("RD", "PN", "PNS")))
+
+    group_var <- enquo(group)
+
+    if (!rlang::quo_is_null(group_var)) {
+      p_radar <- ggplot(radar_long, aes(x = measure, y = value, group = 1)) +
+        geom_polygon(alpha = 0.3, fill = "blue", color = "blue", linewidth = 1) +
+        geom_point(size = 2) +
+        coord_polar() +
+        facet_wrap(vars({{group}})) +
+        theme_minimal() +
+        labs(x = NULL, y = NULL)
+    } else {
+      p_radar <- ggplot(radar_long, aes(x = measure, y = value, group = 1)) +
+        geom_polygon(alpha = 0.3, fill = "blue", color = "blue", linewidth = 1) +
+        geom_point(size = 2) +
+        coord_polar() +
+        theme_minimal() +
+        labs(x = NULL, y = NULL)
+    }
+
+    return(p_radar)
+  }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
