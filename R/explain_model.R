@@ -89,15 +89,22 @@ explain_model <- function(meta_learner,plot,variable,n = 100,new_obs = NULL,grou
       legend.position = "bottom"
     )
 
-  # If the metalearner is S Learner
-  if (inherits(meta_learner,"s_learner")) {
-
+  # Make the Class name look good for printing
+  pretty_class <- function(x) {
+    switch(
+      x,
+      "s_learner" = "S-Learner",
+      "t_learner" = "T-Learner",
+      "x_learner" = "X-Learner",
+      toupper(x) # fallback if some other class
+    )
+  }
     # DALEX explainer
     explainer <- DALEX::explain(
       model            = meta_learner,
       data             = dallex_data,
       y                = meta_learner$effect_measures$ITE,
-      label            = "S Learner",
+      label            = pretty_class(class(meta_learner)),
       predict_function = predict_ite
     )
 
@@ -128,7 +135,7 @@ explain_model <- function(meta_learner,plot,variable,n = 100,new_obs = NULL,grou
         pdp <- DALEX::model_profile(explainer = explainer,variables = variable,type = "partial",N = n,groups = group)
         # Store the plot
         p <- plot(pdp) +
-          ggtitle(paste0("Partial Dependence of ", variable, " on ITE"," Grouped by ",group,)) +
+          ggtitle(paste0("Partial Dependence of ", variable, " on ITE"," Grouped by ",group)) +
           labs(x = variable, y = "Individual Treatment Effect (ITE)") +
           scale_color_manual(values = group_colors) +
           theme_custom
@@ -153,7 +160,7 @@ explain_model <- function(meta_learner,plot,variable,n = 100,new_obs = NULL,grou
         ice <- DALEX::model_profile(explainer = explainer,variables = variable,type = "conditional",N = n,groups = group)
         # Store the plot
         p <- plot(ice) +
-          ggtitle(paste0("Individual Conditional Expectation"," of ", variable, " on ITE"," Grouped by ", group ,)) +
+          ggtitle(paste0("Individual Conditional Expectation"," of ", variable, " on ITE"," Grouped by ", group)) +
           labs(x = variable, y = "Individual Treatment Effect (ITE)") +
           scale_color_manual(values = group_colors) +
           theme_custom
@@ -176,28 +183,9 @@ explain_model <- function(meta_learner,plot,variable,n = 100,new_obs = NULL,grou
           ggtitle(paste0("SHAP Plot for Observation")) +
           theme_custom
       }
-    }
     # Return the plot
     return(p)
 }
-
-#### S Learner ####
-
-## PDP
-a <- explain_model(meta_learner = s_fit_cl,plot = "pdp",variable = "x1",n = 100)
-b <- explain_model(meta_learner = s_fit_cl,plot = "pdp",variable = "x1",n = 100,group = "group")
-
-## ICE
-c <- explain_model(meta_learner = s_fit_cl,plot = "ice",variable = "x1",n = 100)
-d <- explain_model(meta_learner = s_fit_cl,plot = "ice",variable = "x1",n = 100,group = "group")
-
-# BD
-e <- explain_model(meta_learner = s_fit_cl,plot = "breakdown",variable = "x1",n = 100)
-
-# SHAP
-f <- explain_model(meta_learner = s_fit_cl,plot = "shap",variable = "x1",n = 100)
-
-
 
 
 
