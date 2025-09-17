@@ -342,24 +342,24 @@ t_learner <- function(
     # Select the best result and finalize the the workflow
     tune_results <- collect_metrics(tuned_result)
     best_result <- tune::select_best(tuned_result)
-
     # Finalize the workflows
-    model_workflow <- tune::finalize_workflow(workflow_1, best_result)
+    workflow_1 <- tune::finalize_workflow(workflow_1, best_result)
+    workflow_0 <- tune::finalize_workflow(workflow_0, best_result)
 
     # Return the modeling
     modeling_results <- list(
       tune_results  = tune_results,
       best_model    = best_result,
-      workflow      = workflow
+      workflow      = workflow_1
     )
   }
-  # Create counterfactual data
-  data_1 <- data %>% mutate(!!treatment := factor(1, levels = c(0,1)))
-  data_0 <- data %>% mutate(!!treatment := factor(0, levels = c(0,1)))
-
   # Final model fitting
-  model_fit_1 <- fit(workflow_1, data = data_1)
-  model_fit_0 <- fit(workflow_0, data = data_0)
+  model_fit_1 <- fit(workflow_1, data = data %>% filter(!!sym(treatment) == 1))
+  model_fit_0 <- fit(workflow_0, data = data %>% filter(!!sym(treatment) == 0))
+
+  # Create counterfactual data for prediction (all rows)
+  data_1 <- data %>% mutate(!!sym(treatment) := factor(1, levels = c(0,1)))
+  data_0 <- data %>% mutate(!!sym(treatment) := factor(0, levels = c(0,1)))
 
   # Outcome for classification problems
   if (mode == "classification") {
@@ -405,8 +405,6 @@ t_learner <- function(
     # Compute tau
     tau_t <- y1 - y0
 
-    # Bind tau to the data
-    data$tau <- tau_t
     # Calculate effects
     ate <- mean(tau_t)                                                                       # ATE (Average Treatment Effect)
     atc <- data %>% filter(treatment == 0) %>% summarise(atc = mean(tau_t)) %>% as.numeric() # ATC (Average Treatment effect on Control)
@@ -431,7 +429,8 @@ t_learner <- function(
       names(res) <- c("lower", "upper")
       res
     }
-
+    # Define n based on counterfactual data
+    n <- nrow(data_1)
     # Progress Bar
     pb <- utils::txtProgressBar(max = bootstrap_iters, style = 3)
 
@@ -449,13 +448,18 @@ t_learner <- function(
         boot_idx <- sample(nrow(data), replace = TRUE)
         boot_data <- data[boot_idx, ]
 
-        # Fit models on bootstrap sample
-        boot_fit_1 <- fit(workflow_1, data = boot_data %>% filter(!!sym(treatment) == 1))
-        boot_fit_0 <- fit(workflow_0, data = boot_data %>% filter(!!sym(treatment) == 0))
-
-        # Predict on ORIGINAL counterfactual data
-        boot_y1[, i] <- predict(boot_fit_1, new_data = data_1, type = "prob")$.pred_1
-        boot_y0[, i] <- predict(boot_fit_0, new_data = data_0, type = "prob")$.pred_1
+        # Fit on the bootstrap sample and predict on the original data
+        treated_data <- boot_data[boot_data[[treatment]] == 1, ]
+        if (nrow(treated_data) > 0) {
+          boot_fit_1 <- fit(workflow_1, data = treated_data)
+          boot_y1[, i] <- predict(boot_fit_1, new_data = data_1, type = "prob")$.pred_1
+        }
+        # Fit on the bootstrap sample and predict on the original data
+        control_data <- boot_data[boot_data[[treatment]] == 0, ]
+        if (nrow(control_data) > 0) {
+          boot_fit_0 <- fit(workflow_0, data = control_data)
+          boot_y0[, i] <- predict(boot_fit_0, new_data = data_0, type = "prob")$.pred_1
+        }
       }
 
       # Compute individual treatment effect (tau)
