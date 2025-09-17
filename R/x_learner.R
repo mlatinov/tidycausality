@@ -87,8 +87,6 @@
 #'@export
 x_learner <- function(
     base_model = NULL,
-    cate_model = NULL,
-    propensity_model = NULL,
     mode = "regression",
     data,
     recipe = NULL,
@@ -97,12 +95,13 @@ x_learner <- function(
     resamples = NULL,
     grid = 20,
     metrics = NULL,
-    optimize = FALSE
+    optimize = FALSE,
+    bootstrap = FALSE,
+    bootstrap_iters = 100,
+    bootstrap_alpha = 0.05,
+    policy = FALSE,
+    policy_method = NULL
 ) {
-
-  # Subset the data based on treatment
-  data_t1 <- data %>% filter(treatment == 1)
-  data_t0 <- data %>% filter(treatment == 0)
 
   # Supported models
   valid_model_names <- c("xgb","random_forest","glmnet","mars")
@@ -133,7 +132,7 @@ x_learner <- function(
         "The following parameters are not valid for %s model: %s.\nValid parameters are: %s",
         model_name,
         paste(invalid_params, collapse = ", "),
-        paste(valid_model_params[[model_name]], collapse = ", ")
+        paste(valid_params[[model_name]], collapse = ", ")
       ),
       call. = FALSE,
       immediate. = TRUE
@@ -154,7 +153,8 @@ x_learner <- function(
       random_forest = "ranger",
       mars = "earth",
       glmnet = "glmnet",
-      xgb = "xgboost")
+      xgb = "xgboost"
+      )
     )
   # Model 0
   model_base_0 <- switch(model_name,
@@ -171,7 +171,7 @@ x_learner <- function(
       mars = "earth",
       glmnet = "glmnet",
       xgb = "xgboost"
-    )
+      )
     )
 
   # Validate the model spec
@@ -191,190 +191,493 @@ x_learner <- function(
     add_model(model_base_0)%>%
     add_recipe(recipe)
 
-  # Handle fixed and tuning parameters
-  if (length(params_to_use) > 0) {
-    fixed_params <- params_to_use[!map_lgl(params_to_use, ~ inherits(.x, "tune"))]
-    tune_params <- params_to_use[map_lgl(params_to_use, ~ inherits(.x, "tune"))]
+  # Separate fixed and tuning parameters
+  fixed_params <- list()
+  tuning_params <- list()
 
-    # Apply fixed params
-    if (length(fixed_params > 0)) {
-      updated_spec <- exec(
-        parsnip::set_args,
-        model_base_1,
-        !!!fixed_params
-      )
-      # Update model workflow with the correct params
-      model_workflow_1 <- workflows::update_model(
-        workflow_1,
-        updated_spec
-      )
-      model_workflow_0 <- workflows::update_model(
-        workflow_0,
-        updated_spec
-      )
+  # Loop over parameters and check if they are for tuning or they are fixed
+  for (param in names(params_to_use)) {
+    if (inherits(params_to_use[[param]], "tune") ||
+        (is.call(params_to_use[[param]]) && as.character(params_to_use[[param]][[1]]) == "tune")) {
+      tuning_params[[param]] <- tune()
+    } else {
+      fixed_params[[param]] <- params_to_use[[param]]
     }
-    # Tune if any tune() params exist
-    if (length(tune_params) > 0) {
-      # Check the resamples
-      if (is.null(resamples)) {
-        stop("`resamples` must be provided when tuning.")
-      }
-      # Check the metric
-      if (is.null(metrics)) {
+  }
+  # Apply fixed parameters if any exist
+  if (length(fixed_params) > 0) {
+    workflow_1 <- workflow_1 %>%
+      workflows::update_model(
+        parsnip::set_args(model_base_1, !!!fixed_params)
+      )
+  }
+  # Apply tuning parameters if any exist
+  if (length(tuning_params) > 0) {
+    workflow_1 <- workflow_1 %>%
+      workflows::update_model(
+        parsnip::set_args(model_base_1, !!!tuning_params)
+      )
+    # Validate resamples for tuning
+    if (is.null(resamples)) {
+      stop("`resamples` must be provided when tuning parameters are specified.")
+    }
+    # Validate the metric for tuning
+    if (is.null(metrics)) {
+      if (mode == "regression") {
+        message("No metric provided RMSE will be used")
         metrics <- yardstick::metric_set(rmse)
-      }else {
-        if (!inherits(metrics, "metric_set")) {
-          stop("`metrics` must be NULL or a valid metric_set created with yardstick::metric_set().")
-        }
+      }else if (mode == "classification"){
+        message("No metric provided Accuracy will be used")
+        metrics <- yardstick::metric_set(accuracy)
       }
-      # Finalize parameter set
-      param_set <- hardhat::extract_parameter_set_dials(model_workflow_1) %>%
-        hardhat::finalize(data)
-      message("Starting Grid search...")
-      # Tune grid control Save the pred in case of optimization needed
-      control_tune_grid <- tune::control_grid(save_pred = TRUE)
-      # Run Grid Search
-      tuned_result <- tune::tune_grid(
-        model_workflow_1,
-        resamples = resamples,
-        grid = grid,
-        metrics = metrics,
-        parameters = param_set,
-        control = control_tune_grid
-      )
-      # Check if optimize = TRUE to run a Bayes optimization with initial from the grid search
-      if (optimize) {
-        message("Starting Bayesian optimization after initial grid search...")
-        # Bayes control with 100 iters and stopping after 20 with no improv
-        control_bayes <- tune::control_bayes(
-          no_improve = 20,
-          save_workflow = TRUE,
-          save_pred = TRUE,
-          seed = 123
-        )
-        # Run Bayes Optimization
-        tuned_result <- tune::tune_bayes(
-          object = model_workflow_1,
-          initial = tuned_result,
-          metrics = metrics,
-          iter = 100,
-          control = control_bayes
-        )
-      }
-      # Select for the best model
-      best_result <- tune::select_best(tuned_result, metrics)
-      # Apply the parameters from tuneing
-      model_workflow_1 <- tune::finalize_workflow(model_workflow_1, best_result)
-      model_workflow_0 <- tune::finalize_workflow(model_workflow_0, best_result)
     }
+    message("Starting tuning process for parameters: ", paste(names(tuning_params), collapse = ", "))
+    # finalize The workflow
+    param_set <- hardhat::extract_parameter_set_dials(workflow_1) %>%
+      dials::finalize(data)
+
+    # Regular Tuning Grid
+    tuned_result <- tune::tune_grid(
+      workflow_1,
+      resamples = resamples,
+      grid = grid,
+      metrics = metrics,
+      control = tune::control_grid(
+        save_pred = TRUE)
+    )
+    # If optimize Run Bayes optimization with initial from the tuned_results
+    if (optimize) {
+      message("Starting Bayesian optimization...")
+      tuned_result <- tune_bayes(
+        workflow_1,
+        resamples = resamples,
+        parameters  = param_set,
+        initial = tuned_result,
+        iter = 100,
+        metrics = metrics,
+        control = control_bayes(no_improve = 20, save_pred = TRUE)
+      )
+    }
+    # Select the best result and finalize the the workflow
+    tune_results <- collect_metrics(tuned_result)
+    best_result <- tune::select_best(tuned_result)
+    # Finalize the workflows
+    workflow_1 <- tune::finalize_workflow(workflow_1, best_result)
+    workflow_0 <- tune::finalize_workflow(workflow_0, best_result)
+
+    # Return the modeling
+    modeling_results <- list(
+      tune_results  = tune_results,
+      best_model    = best_result,
+      workflow      = workflow_1
+    )
   }
-  # Two outcome models Final fit
-  model_fit_1 <- fit(model_workflow_1, data = data_t1)
-  model_fit_0 <- fit(model_workflow_0, data = data_t0)
+  # Final model fitting
+  model_fit_1 <- fit(workflow_1, data = data %>% filter(!!sym(treatment) == 1))
+  model_fit_0 <- fit(workflow_0, data = data %>% filter(!!sym(treatment) == 0))
 
-  # Take the outcome var name from recipe
-  outcome_name <- recipe$var_info %>% filter(role == "outcome") %>% select(variable) %>% pull(variable)
-  # Take the predictors names from the recipe
-  predictor_names <- recipe$var_info %>% filter(role == "predictor") %>% pull(variable)
+  # Outcome name
+  outcome <-model_fit_1$pre$actions$recipe$recipe$var_info %>% filter(role == "outcome") %>% pull(variable)
 
-  # Outcomes
-  outcome_1 <- data_t1 %>% pull(!!outcome_name)
-  outcome_0 <- data_t0 %>% pull(!!outcome_name)
-
-  # Fill in missing counterfactual outcomes → pseudo - treatment effects.
-  # Calculate pseudo-effects with type safety
-  get_predictions <- function(model, newdata) {
-    preds <- predict(model, newdata)
-    if (is.data.frame(preds)) return(preds$.pred)
-    if (is.list(preds)) return(unlist(preds))
-    as.numeric(preds)
+  # Predict
+  if (mode == "classification") {
+    mu1_hat <- predict(model_fit_1, new_data = data,type = "prob")$.pred_1
+    mu0_hat <- predict(model_fit_0, new_data = data,type = "prob")$.pred_1
+  }else{
+    mu1_hat <- predict(model_fit_1, new_data = data)$.pred
+    mu0_hat <- predict(model_fit_0, new_data = data)$.pred
   }
+  # Attach predictions
+  if (mode == "classification") {
+    # Ensure outcome is numeric 0/1
+    y_num <- as.numeric(data[[outcome]]) - 1
 
-  data_t1$D <- as.numeric(outcome_1 - get_predictions(model_fit_0, data_t1))
-  data_t0$D <- as.numeric(get_predictions(model_fit_1, data_t0) - outcome_0)
+    data_aug <- data %>%
+      mutate(
+        mu1_hat = mu1_hat,
+        mu0_hat = mu0_hat,
+        # For treated units: observed Y minus predicted control outcome
+        D1 = if_else(treatment == 1, y_num - mu0_hat, NA_real_),
+        # For control units: predicted treated outcome minus observed Y
+        D0 = if_else(treatment == 0, mu1_hat - y_num, NA_real_)
+      )
+  } else {
+    y_num <- data[[outcome]]
 
-  # Verify before modeling
-  stopifnot(is.numeric(data_t1$D), is.numeric(data_t0$D))
+    data_aug <- data %>%
+      mutate(
+        mu1_hat = mu1_hat,
+        mu0_hat = mu0_hat,
+        # For treated units: observed Y minus predicted control outcome
+        D1 = if_else(treatment == 1, y_num - mu0_hat, NA_real_),
+        # For control units: predicted treated outcome minus observed Y
+        D0 = if_else(treatment == 0, mu1_hat - y_num, NA_real_)
+      )
+  }
+  # Specification and new recipe for the Cate models
+  predictors <- setdiff(colnames(data), c(outcome, treatment))
 
-  # Cate model name
-  cate_model_name <- cate_model
+  recipe_tau1 <- recipe(D1 ~ ., data = data_aug %>% filter(!!sym(treatment) == 1)) %>%
+    update_role(all_of(predictors), new_role = "predictor") %>%
+    step_rm(treatment, D0, mu1_hat, mu0_hat)
+
+  recipe_tau0 <- recipe(D0 ~ ., data = data_aug %>% filter(!!sym(treatment) == 0)) %>%
+    update_role(all_of(predictors), new_role = "predictor") %>%
+    step_rm(treatment, D1, mu1_hat, mu0_hat)
+
+  # Random Forest model for Specification for presudo residuals modeling
+  rand_forest <- rand_forest(trees = 1000) %>%
+    set_mode("regression") %>%
+    set_engine("ranger")
 
   # Train group - specific CATE models on those pseudo - effects.
-  tau_1_fit <- switch(cate_model_name,
-                      random_forest = rand_forest(),
-                      mars = mars(),
-                      xgb = boost_tree(),
-                      glmnet = logistic_reg()
-  ) %>%
-    set_mode(mode) %>%
-    set_engine(switch(cate_model_name,
-                      random_forest = "ranger",
-                      mars = "earth",
-                      xgb = "xgboost",
-                      glmnet = "glmnet")
-               ) %>%
-    fit(D ~ ., data = data_t1[, c("D", predictor_names)])
+  tau1_fit <- workflow() %>%
+    add_model(rand_forest) %>%
+    add_recipe(recipe_tau1) %>%
+    fit(data = data_aug %>% filter(!!sym(treatment) == 1))
 
-  tau_0_fit <- switch(cate_model_name,
-                      random_forest = rand_forest(),
-                      mars = mars(),
-                      xgb = boost_tree(),
-                      glmnet = linear_reg()
-  ) %>%
-    set_mode(mode) %>%
-    set_engine(switch(cate_model_name,
-                      random_forest = "ranger",
-                      mars = "earth",
-                      xgb = "xgboost",
-                      glmnet = "glmnet")
-               ) %>%
-    fit(D ~ ., data = data_t0[, c("D", predictor_names)])
+  tau0_fit <- workflow() %>%
+    add_model(rand_forest) %>%
+    add_recipe(recipe_tau0) %>%
+    fit(data = data_aug %>% filter(!!sym(treatment) == 0))
 
-# Estimate propensity score to quantify how likely someone with given 𝑋 X is to be treated.
-  propensity_model_name <- propensity_model
+  # Predict on the pseudo residuals
+  y1 <- predict(tau1_fit, new_data = data_aug)$.pred
+  y0 <- predict(tau0_fit, new_data = data_aug)$.pred
 
-  ps_model <- switch(propensity_model_name,
-                     random_forest = rand_forest(),
-                     mars = mars(),
-                     xgb = boost_tree(),
-                     glmnet = linear_reg()
-  ) %>%
-    set_mode("classification") %>%
-    set_engine(switch(propensity_model_name,
-      random_forest = "ranger",
-      mars = "earth",
-      xgb = "xgboost",
-      glmnet = "glmnet")
-    ) %>%
-    fit(as.factor(treatment) ~ ., data = data[, c(predictor_names, "treatment")])
+  # Propensity Score model
 
-  e_hat <- predict(ps_model, data, type = "prob")$.pred_1
+  # Recipe for the propensity model
+  prop_recipe <- recipe(treatment ~ ., data = data) %>%
+    step_rm(outcome)  # remove outcome from predictors
 
-# Blend the two CATE predictions so that imbalanced group data doesn’t dominate.
-  tau_hat_treated <- predict(tau_1_fit, data) %>% pull(.pred)
-  tau_hat_control <- predict(tau_0_fit, data) %>% pull(.pred)
+  # Logistic regression model spec
+  prop_model <- logistic_reg() %>%
+    set_engine("glm") %>%
+    set_mode("classification")
+
+  # Workflow
+  prop_workflow <- workflow() %>%
+    add_model(prop_model) %>%
+    add_recipe(prop_recipe)
+
+  # Fit model
+  prop_fit <- fit(prop_workflow, data = data)
+
+  # Predict propensity scores (probability of treatment)
+  e_hat <- predict(prop_fit, new_data = data, type = "prob")$.pred_1
+
+  # Calculate effect measures for Classification model
+  if (mode == "classification") {
+
+    # Calculate effects
+    rd      <- mean(y1 - y0)                   # RD (Risk Diffrence)
+    rr      <- mean(y1) / mean(y0)             # RR (Relative Risk)
+    rr_star <- (1 - mean(y0)) / (1 - mean(y1)) # RR* (Adjusted relative risk)
+    or      <- (mean(y1) / (1 - mean(y1))) /
+               (mean(y0) / (1 - mean(y0)))         # OR (Odds Ration)
+    nnt     <- 1 / rd                                        # NNT (Number Needed to Treat)
+    ate     <- mean(y1 - y0)                          # ATE (Average Treatment Effect)
+    tau     <- (1 - e_hat) * y1 + e_hat * y0            # Individual Effect
+    att     <- mean(tau[data[[treatment]]==1])               # ATT (Average Treatment effect on Treated)
+    atc     <- mean(tau[data[[treatment]]==0])               # ATC (Average Treatment effect on Control)
+    pns     <- mean(y1 * (1 - y0))                 # PNS (Probability of Necessity and Sufficiency)
+    pn      <- pns / mean(y1)                           # PN (Probability of Necessity)
+
+    # Return a list with Effects
+    effect_measures <- list(
+      y1 = y1, # Predicted prob for Y = 1
+      y0 = y0, # Predicted prob for Y = 0
+      RD = rd,      # Risk Diffrence
+      RR = rr,      # Relative Risk
+      OR = or,      # Odds Ration
+      RR_star = rr, # Adjusted relative risk
+      NNT = nnt,    # Number Needed to Treat
+      ITE = tau,    # Individual Effect
+      ATE = ate,    # Average Treatment Effect
+      ATT = att,    # Average Treatment effect on Treated
+      ATC = atc,    # Average Treatment effect on Control
+      PNS = pns,    # Probability of Necessity and Sufficiency
+      PN = pn       # Probability of Necessity
+    )
+  # Outcomes for Regression problems
+}else{
 
   # Compute tau
-  tau_hat <- (1 - e_hat) * tau_hat_treated + e_hat * tau_hat_control
+  tau <- (1 - e_hat) * y1 + e_hat * y0  # Individual Effect
 
-  # Return tibble with estimates
-  estimates <- tibble(
-    tau_hat_treated = tau_hat_treated,
-    tau_hat_control = tau_hat_control,
-    propensity_score = e_hat,
-    tau_hat = tau_hat
-  )
-  # Return
+  # Calculate effects
+  ate <- mean(tau)                                                                       # ATE (Average Treatment Effect)
+  atc <- data %>% filter(treatment == 0) %>% summarise(atc = mean(tau)) %>% as.numeric() # ATC (Average Treatment effect on Control)
+  att <- data %>% filter(treatment == 1) %>% summarise(att = mean(tau)) %>% as.numeric() # ATT (Average Treatment effect on Treated)
+
+  # Return a list with Effects
+  effect_measures <- list(
+    y1 = y1,  # Predicted prob for Y = 1
+    y0 = y0,  # Predicted prob for Y = 0
+    ITE = tau,   # Individual effect
+    ATE = ate,   # Average Treatment Effect
+    ATT = att,   # Average Treatment effect on Treated
+    ATC = atc    # Average Treatment effect on Control
+    )
+  }
+  # Bootstrap confidence intervals for T-learner
+  if (bootstrap) {
+    message("Running ", bootstrap_iters, " bootstrap iterations...")
+    # Helper function to compute CI
+    ci <- function(x, alpha = 0.05) {
+      res <- quantile(x, probs = c(alpha/2, 1-alpha/2), na.rm = TRUE)
+      names(res) <- c("lower", "upper")
+      res
+    }
+    # Define n based on counterfactual data
+    n <- nrow(data)
+    # Progress Bar
+    pb <- utils::txtProgressBar(max = bootstrap_iters, style = 3)
+
+    # Bootstrap for CIs for the effects
+
+      # Matrices to store predictions and propensity
+      boot_y1 <- matrix(NA, n, bootstrap_iters)
+      boot_y0 <- matrix(NA, n, bootstrap_iters)
+      boot_propensity <- matrix(NA , n, bootstrap_iters)
+
+      # Loop over bootstrap iterations
+      for (i in seq_len(bootstrap_iters)) {
+        utils::setTxtProgressBar(pb, i)
+
+        # Sample with replacement from original data
+        boot_idx <- sample(nrow(data), replace = TRUE)
+        boot_data <- data[boot_idx, ]
+
+        # First Stage Recipes based on the original one with the bootstrap sample
+
+        # Subset bootstrap sample for treated and control
+        boot_data_1 <- boot_data %>% filter(!!sym(treatment) == 1)
+        boot_data_0 <- boot_data %>% filter(!!sym(treatment) == 0)
+
+        # Extract original steps from the input recipe
+        original_steps <- recipe$steps
+
+        # Create new untrained recipes for the bootstrap samples
+        boot_recipe_1 <- recipe(outcome ~ ., data = boot_data_1)
+        boot_recipe_0 <- recipe(outcome ~ ., data = boot_data_0)
+
+        # Add original steps to the new recipes
+        for(step in original_steps) {
+          boot_recipe_1 <- boot_recipe_1 %>% add_step(step)
+          boot_recipe_0 <- boot_recipe_0 %>% add_step(step)
+        }
+        # First Stage Workflows based on the original model with bootstrap rebuild recipes
+        boot_workflow_1 <- workflow() %>% add_model(model_base_1) %>% add_recipe(boot_recipe_1)
+        boot_workflow_0 <- workflow() %>% add_model(model_base_0) %>% add_recipe(boot_recipe_0)
+
+        # Fit the first-stage outcome models on the bootstrap sample.
+        boot_fit_1 <- fit(boot_workflow_1, data = boot_data %>% filter(!!sym(treatment) == 1))
+        boot_fit_0 <- fit(boot_workflow_0, data = boot_data %>% filter(!!sym(treatment) == 0))
+
+        # Predict on the  bootstrap sample Stage 1
+        if (mode == "classification") {
+          boot_mu1_hat <- predict(boot_fit_1, new_data = boot_data,type = "prob")$.pred_1
+          boot_mu0_hat <- predict(boot_fit_0, new_data = boot_data,type = "prob")$.pred_1
+        }else{
+          boot_mu1_hat <- predict(boot_fit_1, new_data = boot_data)$.pred
+          boot_mu0_hat <- predict(boot_fit_0, new_data = boot_data)$.pred
+        }
+        # Attach predictions
+        if (mode == "classification") {
+          # Ensure outcome is numeric 0/1
+          boot_y_num <- as.numeric(boot_data[[outcome]]) - 1
+
+          # Compute pseudo-effects (D1, D0) in the bootstrap sample.
+          boot_aug <- boot_data %>%
+            mutate(
+              boot_mu1_hat = boot_mu1_hat,
+              boot_mu0_hat = boot_mu0_hat,
+              # For treated units: observed Y minus predicted control outcome
+              boot_D1 = if_else(treatment == 1, boot_y_num - boot_mu1_hat, NA_real_),
+              # For control units: predicted treated outcome minus observed Y
+              boot_D0 = if_else(treatment == 0, boot_mu0_hat - boot_y_num, NA_real_)
+            )
+        } else {
+          boot_y_num <- boot_data[[outcome]]
+
+          # Compute pseudo-effects (D1, D0) in the bootstrap sample.
+          boot_aug <- boot_data %>%
+            mutate(
+              boot_mu1_hat = boot_mu1_hat,
+              boot_mu0_hat = boot_mu0_hat,
+              # For treated units: observed Y minus predicted control outcome
+              boot_D1 = if_else(treatment == 1, boot_y_num - boot_mu0_hat, NA_real_),
+              # For control units: predicted treated outcome minus observed Y
+              boot_D0 = if_else(treatment == 0, boot_mu1_hat - boot_y_num, NA_real_)
+            )
+        }
+        # Second Stage Recipes on the bootstrap sample boot_aug
+        boot_recipe_2 <- recipe(boot_D1 ~ ., data = boot_aug %>% filter(!!sym(treatment) == 1)) %>%
+          update_role(all_of(predictors), new_role = "predictor") %>%
+          step_rm(treatment, boot_D0, boot_mu1_hat, boot_mu0_hat)
+
+        boot_recipe_3 <- recipe(boot_D0 ~ ., data = boot_aug %>% filter(!!sym(treatment) == 0)) %>%
+          update_role(all_of(predictors), new_role = "predictor") %>%
+          step_rm(treatment, boot_D1, boot_mu1_hat, boot_mu0_hat)
+
+        # Fit the Second Stage  models on the bootstrap sample.
+        boot_fit_2 <- workflow() %>%
+          add_model(rand_forest) %>%
+          add_recipe(boot_recipe_2) %>%
+          fit(data = boot_aug %>% filter(!!sym(treatment) == 1))
+
+        boot_fit_3 <- workflow() %>%
+          add_model(rand_forest) %>%
+          add_recipe(boot_recipe_3) %>%
+          fit(data = boot_aug %>% filter(!!sym(treatment) == 0))
+
+        # Predict on the bootstrap sample Stage 2 Regression with pseudo residuals D1 D0
+        boot_y1[,i] <- predict(boot_fit_2, new_data = boot_aug)$.pred
+        boot_y0[,i] <- predict(boot_fit_3, new_data = boot_aug)$.pred
+
+        # Propensity model recipe on the boostrap sample
+        boot_prop_recipe <- recipe(treatment ~ ., data = boot_data) %>%
+          step_rm(outcome)
+
+        # Propensity model workflow with boot_prop_recipe
+        boot_prop_workflow <- workflow() %>%
+          add_model(prop_model) %>%
+          add_recipe(boot_prop_recipe)
+
+        # Estimate Propensity on the bootstrap sample
+        boot_prop_fit <- fit(boot_prop_workflow, data = boot_data)
+
+        # Predict propensity scores (probability of treatment)
+        boot_propensity[,i] <- predict(boot_prop_fit, new_data = data, type = "prob")$.pred_1
+      }
+      # Compute Effect measures for Regression (Core Measures)
+      boot_tau  <- (1 - boot_propensity) * boot_y1 + boot_propensity * boot_y0 # individual treatment effect (tau)
+      ate_boot <- colMeans(boot_tau, na.rm = TRUE)
+      att_boot <- colMeans(boot_tau[data[[treatment]] == 1, ], na.rm = TRUE)
+      atc_boot <- colMeans(boot_tau[data[[treatment]] == 0, ], na.rm = TRUE)
+
+      # Compute Effect measures for Specific for Classification
+      if (mode == "classification") {
+
+        # For ratio-based measures, compute per iteration then take CI
+        mean_y1 <- colMeans(boot_y1, na.rm = TRUE)
+        mean_y0 <- colMeans(boot_y0, na.rm = TRUE)
+
+        rr_boot <- mean_y1 / mean_y0                              # Risk Ratio
+        rd_boot <- mean_y1 - mean_y0                              # Risk Difference
+        or_boot <- (mean_y1/(1-mean_y1)) / (mean_y0/(1-mean_y0))  # Odds Ratio
+
+        # For NNT, handle infinite values from small risk differences
+        nnt_boot <- 1 / rd_boot
+        nnt_boot[abs(rd_boot) < 1e-10] <- NA
+
+        # For PNS and PN
+        pns_boot <- colMeans(boot_y1 * (1 - boot_y0), na.rm = TRUE)
+        pn_boot <- pns_boot / mean_y1
+
+        # Compute CIs for all measures
+        effect_measures_boots <- list(
+          ATE = c(estimate = mean(ate_boot, na.rm = TRUE),
+                  ci(ate_boot, alpha = bootstrap_alpha)),
+          ATT = c(estimate = mean(att_boot, na.rm = TRUE),
+                  ci(att_boot, alpha = bootstrap_alpha)),
+          ATC = c(estimate = mean(atc_boot, na.rm = TRUE),
+                  ci(atc_boot, alpha = bootstrap_alpha)),
+          RR = c(estimate = mean(rr_boot, na.rm = TRUE),
+                 ci(rr_boot, alpha = bootstrap_alpha)),
+          RD = c(estimate = mean(rd_boot, na.rm = TRUE),
+                 ci(rd_boot, alpha = bootstrap_alpha)),
+          OR = c(estimate = mean(or_boot, na.rm = TRUE),
+                 ci(or_boot, alpha = bootstrap_alpha)),
+          NNT = c(estimate = mean(nnt_boot, na.rm = TRUE),
+                  ci(nnt_boot, alpha = bootstrap_alpha)),
+          PNS = c(estimate = mean(pns_boot, na.rm = TRUE),
+                  ci(pns_boot, alpha = bootstrap_alpha)),
+          PN = c(estimate = mean(pn_boot, na.rm = TRUE),
+                 ci(pn_boot, alpha = bootstrap_alpha))
+        )
+        # Return only the effect measures for Regression
+      }else{
+        # Compute CIs for all measures
+        effect_measures_boots <- list(
+          ATE = c(estimate = mean(ate_boot, na.rm = TRUE),
+                  ci(ate_boot, alpha = bootstrap_alpha)),
+          ATT = c(estimate = mean(att_boot, na.rm = TRUE),
+                  ci(att_boot, alpha = bootstrap_alpha)),
+          ATC = c(estimate = mean(atc_boot, na.rm = TRUE),
+                  ci(atc_boot, alpha = bootstrap_alpha))
+          )
+        }
+      # Close progress bar
+      close(pb)
+  }
+  # Policy Implementation
+  if (policy) {
+    # Greedy policy
+    if (policy_method == "greedy") {
+      # Greedy policy function to compute gains and policy vec
+      greedy_policy <- function(threshold, tau) {
+        policy_vec <- ifelse(tau > threshold, 1, 0)
+        gain <- sum(tau * policy_vec)
+        return(gain)
+      }
+      # Set 50 thresholds from min to max tau
+      thresholds <- seq(min(tau), max(tau), length.out = 50)
+
+      # Compute gains for each threshold
+      gains <- sapply(thresholds, greedy_policy, tau = tau)
+
+      # Find the best threshold and corresponding gain
+      best_idx <- which.max(gains)
+      best_threshold <- thresholds[best_idx]
+      best_gain <- gains[best_idx]
+
+      # Compute policy vector for the best threshold
+      policy_vector <- ifelse(tau > best_threshold, 1, 0)
+
+      # Gain Curve
+      gain_df <- data.frame(thresholds = thresholds,gain = gains)
+      gain_plot <- ggplot(gain_df, aes(x = thresholds, y = gain)) +
+        geom_line(color = "steelblue", linewidth = 1) +
+        geom_point(aes(x = best_threshold, y = best_gain), color = "red", size = 3) +
+        labs(
+          title = "Greedy Policy Gain Curve",
+          subtitle =
+            paste0("Best Threshold = ", round(best_threshold, 4), ", Gain = ", round(best_gain, 4)),x = "Threshold", y = "Total Gain") +
+        theme_minimal()
+
+      # Output policy details
+      policy_details <- list(
+        best_threshold = best_threshold,
+        best_gain = best_gain,
+        policy_vector = policy_vector,
+        gain_curve = gain_plot
+      )
+    }
+  }
+  # Object structure
   structure(
     list(
-      model_fit_1 = model_fit_1,
-      model_fit_0 = model_fit_0,
-      tau_1_fit = tau_1_fit,
-      tau_0_fit = tau_0_fit,
-      ps_model = ps_model,
-      estimates = estimates
+      base_model = list(
+        model_base_1 = model_base_1,
+        model_base_0 = model_base_0
+        ),
+      treatment = treatment,
+      data = data,
+      model_fit = list(
+        st_1_m_1 = model_fit_1,
+        st_1_m_0 = model_fit_0,
+        st_2_m_1 = tau1_fit,
+        st_2_m_0 = tau0_fit
+        ),
+      effect_measures = effect_measures,
+      effect_measures_boots = if(bootstrap) effect_measures_boots else NULL,
+      modeling_results  = if("tune()" %in% tune_params) modeling_results else NULL,
+      policy_details = if(policy) policy_details else NULL
     ),
-    class = "x_learner"
+    class = c("x_learner", "causal_learner")
   )
 }
 
