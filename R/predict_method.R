@@ -49,12 +49,8 @@ predict.causal_learner <- function(object,new_data,policy = FALSE,policy_method 
   treatment_name <- object$treatment
 
   # Build counterfactual datasets
-  data_1 <- new_data %>%
-    dplyr::mutate(!!rlang::sym(treatment_name) := factor(1))
-
-  data_0 <- new_data %>%
-    dplyr::mutate(!!rlang::sym(treatment_name) := factor(0))
-
+  data_1 <- new_data %>% mutate(!!sym(treatment_name) := factor(1, levels = c(0,1)))
+  data_0 <- new_data %>% mutate(!!sym(treatment_name) := factor(0, levels = c(0,1)))
   #### Model Specifications ####
 
   # S Learner
@@ -100,8 +96,8 @@ predict.causal_learner <- function(object,new_data,policy = FALSE,policy_method 
       ### T Learner
     }else if (inherits(object,"t_learner")) {
       # Predict prob on the counterfactual data using bolt models
-      y1_prob <- predict(model_fit_1,new_data = data_1,type = "prob")$.pred_1
-      y0_prob <- predict(model_fit_0,new_data = data_0,type = "prob")$.pred_1
+      y1_prob <- predict(model_fit_1, new_data = data_1, type = "prob")$.pred_1
+      y0_prob <- predict(model_fit_0, new_data = data_0, type = "prob")$.pred_1
 
       ### X Learner
     }else if (inherits(object,"x_learner")) {
@@ -151,14 +147,14 @@ predict.causal_learner <- function(object,new_data,policy = FALSE,policy_method 
     ## S Learner
     if (inherits(object,"s_learner")) {
       # Predict prob on the counterfactual data
-      y1_prob <- predict(model_fit,new_data = data_1)$.pred_1
-      y0_prob <- predict(model_fit,new_data = data_0)$.pred_1
+      y1_prob <- predict(model_fit,new_data = data_1)$.pred
+      y0_prob <- predict(model_fit,new_data = data_0)$.pred
 
       ### T Learner
     }else if (inherits(object,"t_learner")) {
       # Predict prob on the counterfactual data using bolt models
-      y1_prob <- predict(model_fit_1,new_data = data_1)$.pred_1
-      y0_prob <- predict(model_fit_0,new_data = data_0)$.pred_1
+      y1_prob <- predict(model_fit_1,new_data = data_1)$.pred
+      y0_prob <- predict(model_fit_0,new_data = data_0)$.pred
 
       ### X Learner
     }else if (inherits(object,"x_learner")) {
@@ -173,9 +169,6 @@ predict.causal_learner <- function(object,new_data,policy = FALSE,policy_method 
     }
     # Compute tau
     tau <- y1_prob - y0_prob
-
-    # Bind tau to the data
-    new_data$tau <- tau
 
     # Calculate effects
     ate <- mean(tau)                                                                                # ATE (Average Treatment Effect)
