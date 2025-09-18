@@ -227,6 +227,19 @@ test_that("Test Bootstrap feature",{
     bootstrap_iters = 20,
     bootstrap_alpha = 0.05
   )
+  # Random Forest Cl + Stability
+  s_fit_rf_cl <- s_learner(
+    base_model = "random_forest",
+    data = data_test_cl,
+    mode = "classification",
+    recipe = s_learner_recipe_cl,
+    treatment = "treatment",
+    tune_params = list(mtry = 2, trees = 120, min_n = 10),
+    bootstrap = TRUE,
+    bootstrap_iters = 20,
+    bootstrap_alpha = 0.05,
+    stability = TRUE
+  )
 
   # Test the structure of the output
   expect_named(s_fit_rf_reg$effect_measures_boots,expected = c("ATE","ATC","ATT"),ignore.order = TRUE)
