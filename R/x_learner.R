@@ -1,61 +1,88 @@
 
-#### X learner ####
-
-# Package imports
-#' @import tidymodels
-#' @import tidyverse
-
 #' @title X-Learner for Causal Inference
 #'
-#'@description
-#' Implementation of the X-learner algorithm for estimating Conditional Average Treatment Effects (CATE).
-#' The X-learner is a meta-algorithm for causal inference that works particularly well with
-#' imbalanced treatment groups and can incorporate machine learning models.
+#' @description
+#' The X-Learner is a meta-algorithm for estimating Conditional Average Treatment Effects (CATE) in causal inference.
+#' It works especially well for imbalanced treatment groups and can leverage machine learning models for both the
+#' outcome and CATE estimation. This implementation supports regression and binary classification outcomes,
+#' with optional bootstrapping, stability measures, parameter tuning, and policy evaluation.
 #'
-#' @param base_model Character or model specification for the base outcome models.
-#'        Supported strings: "xgb", "random_forest", "glmnet", "mars".
-#' @param cate_model Character or model specification for the CATE models.
-#'        Same supported models as base_model.
-#' @param propensity_model Character or model specification for the propensity score model.
-#'        Same supported models as base_model.
-#' @param mode "regression" for the outcome models.
-#' @param data A data frame containing the treatment, outcome, and covariates.
-#' @param recipe A recipes::recipe object specifying the preprocessing steps.
-#' @param treatment Character name of the treatment variable (must be binary 0/1).
-#' @param tune_params Named list of parameters to tune (use tune() for tuning parameters).(Tune grid will be performed only on the base model)
-#' @param resamples Resampling object from rsample for model tuning (required if tuning).
-#' @param grid Number of grid points for tuning or a data frame of specific values.
-#' @param metrics Metric set for evaluation (from yardstick). Defaults to RMSE for regression.
-#' @param optimize Logical whether to perform Bayesian optimization after initial grid search.(BO will be performed only on the base model)
+#' @param base_model Character or parsnip model specification for the base outcome models.
+#'        Supported models: "xgb", "random_forest", "glmnet", "mars".
+#' @param cate_model Character or parsnip model specification for the CATE models.
+#'        Currently defaults to a random forest.
+#' @param propensity_model Character or parsnip model specification for the propensity score model.
+#'        Currently defaults to logistic regression.
+#' @param mode Character. Outcome type: "regression" or "classification".
+#' @param data A data frame containing the treatment variable, outcome, and covariates.
+#' @param recipe A `recipes::recipe` object specifying preprocessing steps for predictors.
+#' @param treatment Character. Name of the binary treatment variable (0/1).
+#' @param tune_params Named list of parameters for tuning the base model. Use `tune()` for parameters to tune.
+#' @param resamples Resampling object (from `rsample`) used for tuning. Required if tuning parameters are provided.
+#' @param grid Integer or data frame. Number of points in the tuning grid or a custom grid.
+#' @param metrics Metric set from `yardstick` for evaluating model performance. Defaults to RMSE for regression or Accuracy for classification.
+#' @param optimize Logical. Whether to perform Bayesian optimization after grid search (only applies to base model tuning).
+#' @param bootstrap Logical. Whether to compute bootstrap estimates and confidence intervals for treatment effects.
+#' @param bootstrap_iters Integer. Number of bootstrap iterations.
+#' @param bootstrap_alpha Numeric. Significance level for bootstrap confidence intervals (default 0.05 for 95% CI).
+#' @param policy Logical. Whether to compute a treatment assignment policy based on estimated CATEs.
+#' @param policy_method Character. Policy method to use ("greedy" supported).
+#' @param stability Logical. Whether to compute stability measures of predictions across bootstrap iterations.
 #'
-#' @return An object of class "x_learner" containing:
+#' @return An object of class `x_learner` (inherits `causal_learner`) containing:
 #' \itemize{
-#'   \item model_fit_1 - Fitted model for treatment group
-#'   \item model_fit_0 - Fitted model for control group
-#'   \item tau_1_fit - Fitted CATE model for treatment group
-#'   \item tau_0_fit - Fitted CATE model for control group
-#'   \item ps_model - Fitted propensity score model
-#'   \item estimates - Tibble with treatment effect estimates:
+#'   \item `base_model`: Original base model specifications for treated and control groups.
+#'   \item `treatment`: Name of the treatment variable.
+#'   \item `data`: Original data used for training.
+#'   \item `model_fit`: List containing first-stage and second-stage fitted models:
 #'     \itemize{
-#'       \item tau_hat_treated - CATE estimates from treated group model
-#'       \item tau_hat_control - CATE estimates from control group model
-#'       \item propensity_score - Estimated propensity scores
-#'       \item tau_hat - Final weighted CATE estimates
+#'       \item `st_1_m_1` and `st_1_m_0`: First-stage outcome models for treated and control groups.
+#'       \item `st_2_m_1` and `st_2_m_0`: Second-stage CATE models for pseudo-effects D1 and D0.
+#'     }
+#'   \item `effect_measures`: Core causal effect estimates:
+#'     \itemize{
+#'       \item `ITE`: Individual treatment effect.
+#'       \item `ATE`: Average Treatment Effect.
+#'       \item `ATT`: Average Treatment Effect on Treated.
+#'       \item `ATC`: Average Treatment Effect on Control.
+#'       \item For classification: RD, RR, OR, RR*, NNT, PNS, PN, and predicted probabilities (`y1`, `y0`).
+#'     }
+#'   \item `effect_measures_boots` (optional): Bootstrap estimates and confidence intervals for all causal effect measures.
+#'   \item `stability_measures` (optional): Unit- and model-level stability metrics for predictions across bootstrap iterations:
+#'     \itemize{
+#'       \item Unit-level SD, CV, 95% quantiles, max-min range.
+#'       \item Mean and median pairwise Kendall’s tau rank correlation across iterations.
+#'       \item SD of ATT and ATC across bootstrap iterations.
+#'       \item Correlation matrices of predictions across bootstrap iterations.
+#'     }
+#'   \item `modeling_results` (optional): Tuning results if tuning was performed.
+#'   \item `policy_details` (optional): Information about the estimated treatment assignment policy:
+#'     \itemize{
+#'       \item `best_threshold`: Optimal CATE threshold for treatment assignment.
+#'       \item `best_gain`: Maximum gain achieved by the policy.
+#'       \item `policy_vector`: Recommended treatment assignment for each unit.
+#'       \item `gain_curve`: ggplot2 object displaying gain vs threshold.
 #'     }
 #' }
 #'
 #' @details
-#' The X-learner algorithm consists of three stages:
-#' 1. Estimate outcome models separately for treated and control groups
-#' 2. Impute treatment effects and train CATE models
-#' 3. Combine estimates using propensity scores
+#' ### X-Learner Algorithm Steps:
+#' 1. **First-stage outcome modeling**: Fit separate models for treated and control groups.
+#' 2. **Pseudo-effect computation**: Compute residuals (D1 for treated, D0 for control) based on first-stage predictions.
+#' 3. **Second-stage CATE modeling**: Fit models to pseudo-effects D1 and D0 to estimate treatment effects conditional on covariates.
+#' 4. **CATE aggregation**: Compute individual treatment effect estimates as a weighted combination using propensity scores.
+#' 5. **Optional bootstrapping**: Estimate variability and confidence intervals of effect measures and stability of predictions.
+#' 6. **Optional policy evaluation**: Compute optimal treatment assignment based on estimated CATEs.
+#'
+#' This implementation supports both regression and binary classification outcomes, allows hyperparameter tuning (grid and Bayesian optimization),
+#' and provides detailed diagnostics including stability and policy evaluation.
 #'
 #' @examples
 #' \dontrun{
 #' library(tidymodels)
 #' library(recipes)
 #'
-#' # Create synthetic data
+#' # Generate synthetic data
 #' set.seed(123)
 #' n <- 1000
 #' X <- matrix(rnorm(n * 5), n, 5)
@@ -64,11 +91,10 @@
 #' Y <- 0.5 * X[,3] + tau * W + rnorm(n)
 #' data <- as_tibble(X) %>% mutate(W = W, Y = Y)
 #'
-#' # Create recipe
-#' rec <- recipe(Y ~ ., data = data) %>%
-#'   step_normalize(all_numeric_predictors())
+#' # Recipe for preprocessing
+#' rec <- recipe(Y ~ ., data = data) %>% step_normalize(all_numeric_predictors())
 #'
-#' # Fit X-learner
+#' # Fit X-learner with random forest
 #' xl_fit <- x_learner(
 #'   base_model = "random_forest",
 #'   cate_model = "random_forest",
@@ -78,13 +104,21 @@
 #'   treatment = "W",
 #'   tune_params = list(mtry = tune(), trees = 100),
 #'   resamples = vfold_cv(data, v = 5),
-#'   grid = 10
+#'   grid = 10,
+#'   bootstrap = TRUE,
+#'   bootstrap_iters = 50,
+#'   stability = TRUE,
+#'   policy = TRUE,
+#'   policy_method = "greedy"
 #' )
 #'
-#' # Examine results
-#' head(xl_fit$estimates)
+#' # Examine effect estimates
+#' xl_fit$effect_measures
+#' xl_fit$effect_measures_boots
+#' xl_fit$stability_measures
+#' xl_fit$policy_details$gain_curve
 #' }
-#'@export
+#' @export
 x_learner <- function(
     base_model = NULL,
     mode = "regression",
@@ -99,6 +133,7 @@ x_learner <- function(
     bootstrap = FALSE,
     bootstrap_iters = 100,
     bootstrap_alpha = 0.05,
+    stability = FALSE,
     policy = FALSE,
     policy_method = NULL
 ) {
@@ -375,13 +410,13 @@ x_learner <- function(
     rr      <- mean(y1) / mean(y0)             # RR (Relative Risk)
     rr_star <- (1 - mean(y0)) / (1 - mean(y1)) # RR* (Adjusted relative risk)
     or      <- (mean(y1) / (1 - mean(y1))) /
-               (mean(y0) / (1 - mean(y0)))         # OR (Odds Ration)
+               (mean(y0) / (1 - mean(y0)))                   # OR (Odds Ration)
     nnt     <- 1 / rd                                        # NNT (Number Needed to Treat)
-    ate     <- mean(y1 - y0)                          # ATE (Average Treatment Effect)
-    tau     <- (1 - e_hat) * y1 + e_hat * y0            # Individual Effect
+    ate     <- mean(y1 - y0)                                 # ATE (Average Treatment Effect)
+    tau     <- (1 - e_hat) * y1 + e_hat * y0                 # Individual Effect
     att     <- mean(tau[data[[treatment]]==1])               # ATT (Average Treatment effect on Treated)
     atc     <- mean(tau[data[[treatment]]==0])               # ATC (Average Treatment effect on Control)
-    pns     <- mean(y1 * (1 - y0))                 # PNS (Probability of Necessity and Sufficiency)
+    pns     <- mean(y1 * (1 - y0))                      # PNS (Probability of Necessity and Sufficiency)
     pn      <- pns / mean(y1)                           # PN (Probability of Necessity)
 
     # Return a list with Effects
@@ -438,9 +473,11 @@ x_learner <- function(
     # Bootstrap for CIs for the effects
 
       # Matrices to store predictions and propensity
-      boot_y1 <- matrix(NA, n, bootstrap_iters)
-      boot_y0 <- matrix(NA, n, bootstrap_iters)
-      boot_propensity <- matrix(NA , n, bootstrap_iters)
+      boot_y1         <- matrix(NA, n, bootstrap_iters)
+      boot_y0         <- matrix(NA, n, bootstrap_iters)
+      boot_propensity <- matrix(NA, n, bootstrap_iters)
+      boot_y0_orig    <- matrix(NA, n, bootstrap_iters)
+      boot_y1_orig    <- matrix(NA, n, bootstrap_iters)
 
       # Loop over bootstrap iterations
       for (i in seq_len(bootstrap_iters)) {
@@ -537,6 +574,37 @@ x_learner <- function(
         boot_y1[,i] <- predict(boot_fit_2, new_data = boot_aug)$.pred
         boot_y0[,i] <- predict(boot_fit_3, new_data = boot_aug)$.pred
 
+        # Stability measures from pseudo-outcomes computed on the original data
+        if (stability) {
+
+          # Predict on original data using first-stage fits
+          if (mode == "classification") {
+            boot_stab_y_num <- as.numeric(data[[outcome]]) - 1
+            boot_stab_m1 <- predict(boot_fit_1, new_data = data, type = "prob")$.pred_1
+            boot_stab_m0 <- predict(boot_fit_0, new_data = data, type = "prob")$.pred_1
+          } else {
+            boot_stab_y_num <- data[[outcome]]
+            boot_stab_m1 <- predict(boot_fit_1, new_data = data)$.pred
+            boot_stab_m0 <- predict(boot_fit_0, new_data = data)$.pred
+          }
+
+          # Compute pseudo-outcomes for the original data
+          D1 <- if_else(data[[treatment]] == 1, boot_stab_y_num - boot_stab_m0, NA_real_)
+          D0 <- if_else(data[[treatment]] == 0, boot_stab_m1 - boot_stab_y_num, NA_real_)
+
+          # Combine pseudo-outcomes with the original data
+          data_orig_aug <- data %>% mutate(
+            boot_D1 = D1,
+            boot_D0 = D0,
+            boot_mu1_hat = boot_stab_m1,
+            boot_mu0_hat = boot_stab_m0
+          )
+
+          # Predict with second-stage bootstrap fits on original data
+          boot_y1_orig[, i] <- predict(boot_fit_2, new_data = data_orig_aug)$.pred
+          boot_y0_orig[, i] <- predict(boot_fit_3, new_data = data_orig_aug)$.pred
+        }
+
         # Propensity model recipe on the boostrap sample
         boot_prop_recipe <- recipe(treatment ~ ., data = boot_data) %>%
           step_rm(outcome)
@@ -551,6 +619,79 @@ x_learner <- function(
 
         # Predict propensity scores (probability of treatment)
         boot_propensity[,i] <- predict(boot_prop_fit, new_data = data, type = "prob")$.pred_1
+
+        # Compute stability measures if requested
+        if (stability) {
+
+          # Compute tau stability
+          stab_tau_boot <- boot_y1_orig - boot_y0_orig
+
+          ## Unit Level Measures
+          unit_sd <- apply(stab_tau_boot, 1 , sd , na.rm = TRUE)                                         # Unit-level SD of predictions
+          unit_mean <- rowMeans(stab_tau_boot, na.rm = TRUE)
+          unit_cv <- unit_sd / (unit_mean + 1e-10)                                                       # Unit-level Coefficient of Variation (CV)
+          unit_ci <- t(apply(stab_tau_boot, 1, quantile, probs = c(0.025, 0.975), na.rm = TRUE))         # Unit-level Prediction Quantiles 95%
+          unit_range <- apply(stab_tau_boot, 1, function(x) max(x, na.rm = TRUE) - min(x, na.rm = TRUE)) # Unit-level Range (Max - Min)
+
+          # Kendall’s tau between all pairs of bootstrap rankings
+          rank_corr_matrix <- matrix(NA, ncol = ncol(stab_tau_boot), nrow = ncol(stab_tau_boot))
+
+          for (i in 1:(ncol(stab_tau_boot)-1)) {
+            for (j in (i+1):ncol(stab_tau_boot)) {
+              rank_corr_matrix[i, j] <- cor(
+                rank(stab_tau_boot[, i]),
+                rank(stab_tau_boot[, j]),
+                method = "kendall",
+                use = "pairwise.complete.obs"
+              )
+            }
+          }
+          # Mean rank correlation across iterations
+          mean_rank_corr <- mean(rank_corr_matrix, na.rm = TRUE)
+
+          ## Model-level stability measures
+          mean_pred_iter <- colMeans(stab_tau_boot , na.rm = TRUE)          # Mean predicted effect per iteration
+          sd_mean_effect  <- sd(colMeans(stab_tau_boot, na.rm = TRUE))      # SD of mean effect
+          cor_pred_iter <- cor(stab_tau_boot,use = "pairwise.complete.obs") # Correlation of predictions across iterations
+          # Summary statistics of pairwise correlations
+          iter_corr_vals <- cor_pred_iter[upper.tri(cor_pred_iter)]
+          mean_pairwise_corr <- mean(iter_corr_vals, na.rm = TRUE)
+          median_pairwise_corr <- median(iter_corr_vals, na.rm = TRUE)
+
+          # Treatment vector
+          treat_vec <- if (is.factor(data[[treatment]])) {
+            as.numeric(as.character(data[[treatment]])) == 1
+          } else {
+            data[[treatment]] == 1
+          }
+          # Indexing
+          treated_idx <- which(treat_vec)
+          control_idx <- which(!treat_vec)
+
+          # Bootstrap ATT / ATC (per iteration)
+          att_iter <- colMeans(stab_tau_boot[treated_idx, , drop = FALSE], na.rm = TRUE)
+          atc_iter <- colMeans(stab_tau_boot[control_idx, , drop = FALSE], na.rm = TRUE)
+
+          # SD of ATT / ATC Bootstrap per iteration
+          sd_att_iter <- sd(att_iter)
+          sd_atc_iter <- sd(atc_iter)
+
+          # Store all in a list
+          stability_measures <- list(
+            sd_prediction = unit_sd,                 # SD of predictions
+            cv = unit_cv,                            # Coefficient of Variation CV
+            prediction_quantiles = unit_ci,          # Unit-level Prediction Quantiles 95%
+            max_min_range = unit_range,              # Unit-level Range (Max - Min)
+            mean_rank_corr = mean_rank_corr,         # Mean rank correlation across iterations
+            mean_pred_effect_iter = mean_pred_iter,  # Mean predicted effect per iteration
+            sd_mean_effect = sd_mean_effect,         # SD of mean effect
+            cor_pred_iter = cor_pred_iter,                # Correlation of predictions across iterations
+            mean_pairwise_corr = mean_pairwise_corr,      # Mean correlation of predictions across iterations
+            median_pairwise_corr = median_pairwise_corr,  # Median correlation of predictions across iterations
+            sd_att_iter = sd_att_iter,                    # SD of ATT Bootstrap per iteration
+            sd_atc_iter = sd_atc_iter                     # SD of ATC Bootstrap per iteration
+            )
+          }
       }
       # Compute Effect measures for Regression (Core Measures)
       boot_tau  <- (1 - boot_propensity) * boot_y1 + boot_propensity * boot_y0 # individual treatment effect (tau)
@@ -674,6 +815,7 @@ x_learner <- function(
         ),
       effect_measures = effect_measures,
       effect_measures_boots = if(bootstrap) effect_measures_boots else NULL,
+      stability_measures = if(stability)  stability_measures else NULL,
       modeling_results  = if("tune()" %in% tune_params) modeling_results else NULL,
       policy_details = if(policy) policy_details else NULL
     ),
