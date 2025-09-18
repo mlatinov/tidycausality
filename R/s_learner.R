@@ -20,6 +20,7 @@
 #' - Comprehensive effect measures (ATE, ATT, ATC, RR, OR, NNT, etc.)
 #' - Hyperparameter tuning via grid search or Bayesian optimization
 #' - Bootstrap confidence intervals for all effect measures
+#' - Model stability assessment across bootstrap iterations
 #' - Custom preprocessing via recipes
 #' - Policy learning for treatment assignment (greedy threshold and policy tree methods)
 #'
@@ -29,6 +30,10 @@
 #' 2. Creating counterfactual datasets where all units are "treated" and "untreated"
 #' 3. Predicting outcomes for both scenarios
 #' 4. Calculating treatment effects as the difference between predictions
+#'
+#' The stability assessment feature provides insights into model reliability across
+#' bootstrap iterations, including unit-level prediction variability and model-level
+#' consistency measures.
 #'
 #' The policy learning feature helps identify optimal treatment assignment rules:
 #' - Greedy threshold: Finds the treatment effect threshold that maximizes total gain
@@ -66,6 +71,8 @@
 #' @param bootstrap_iters Number of bootstrap iterations if `bootstrap = TRUE`.
 #'   Defaults to 100.
 #' @param bootstrap_alpha Alpha level for confidence intervals. Defaults to 0.05.
+#' @param stability Logical. Whether to compute model stability measures across bootstrap
+#'   iterations. Requires `bootstrap = TRUE`. Defaults to FALSE.
 #'
 #' @return
 #' An object of class `"s_learner"` containing:
@@ -79,6 +86,21 @@
 #' }
 #' \item{effect_measures_boots}{(Only if bootstrap=TRUE) List with bootstrap CIs for all effects,
 #'   each element contains estimate, lower, and upper bounds}
+#' \item{stability_measures}{(Only if stability=TRUE) List containing model stability assessment:
+#'   \itemize{
+#'     \item \code{sd_prediction}: Unit-level standard deviation of treatment effect predictions
+#'     \item \code{cv}: Unit-level coefficient of variation of predictions
+#'     \item \code{prediction_quantiles}: Unit-level 95\% prediction intervals
+#'     \item \code{max_min_range}: Unit-level range of predictions across iterations
+#'     \item \code{mean_rank_corr}: Mean Kendall's tau correlation between bootstrap rankings
+#'     \item \code{mean_pred_effect_iter}: Mean predicted effect per bootstrap iteration
+#'     \item \code{sd_mean_effect}: Standard deviation of mean effects across iterations
+#'     \item \code{mean_pairwise_corr}: Mean correlation between predictions across iterations
+#'     \item \code{median_pairwise_corr}: Median correlation between predictions across iterations
+#'     \item \code{sd_att_iter}: Standard deviation of ATT estimates across iterations
+#'     \item \code{sd_atc_iter}: Standard deviation of ATC estimates across iterations
+#'   }
+#' }
 #' \item{modeling_results}{(Only if tuning performed) Tuning results and best parameters}
 #' \item{policy_details}{(Only if policy=TRUE) Contains:
 #'   \itemize{
@@ -97,6 +119,78 @@
 #'   \item{PNS}{Probability of Necessity and Sufficiency}
 #'   \item{PN}{Probability of Necessity}
 #' }
+#'
+#' @section Stability Assessment:
+#' When `stability = TRUE`, the function provides comprehensive model reliability metrics
+#' that assess how consistent the treatment effect estimates are across bootstrap resamples.
+#' This helps evaluate the robustness and reliability of the causal model.
+#'
+#' \describe{
+#'   \item{Unit-level stability}{
+#'     Measures variability of individual treatment effect predictions across bootstrap iterations.
+#'     For each unit \eqn{i}, we compute:
+#'     \itemize{
+#'       \item \strong{Prediction standard deviation}:
+#'             \eqn{\sigma_i = \sqrt{\frac{1}{B-1}\sum_{b=1}^B (\hat{\tau}_{i}^{(b)} - \bar{\tau}_i)^2}}
+#'             where \eqn{\hat{\tau}_{i}^{(b)}} is the treatment effect estimate for unit \eqn{i}
+#'             in bootstrap iteration \eqn{b}, and \eqn{B} is the number of bootstrap iterations
+#'       \item \strong{Coefficient of variation}:
+#'             \eqn{CV_i = \frac{\sigma_i}{|\bar{\tau}_i| + \epsilon}} (with \eqn{\epsilon = 10^{-10}}
+#'             to avoid division by zero), measuring relative variability
+#'       \item \strong{95\% prediction intervals}:
+#'             \eqn{[Q_{0.025}(\hat{\tau}_{i}), Q_{0.975}(\hat{\tau}_{i})]} where \eqn{Q_p} is the
+#'             p-th quantile across bootstrap iterations
+#'       \item \strong{Range}: \eqn{\max_b(\hat{\tau}_{i}^{(b)}) - \min_b(\hat{\tau}_{i}^{(b)})},
+#'             showing the total spread of predictions
+#'     }
+#'     High unit-level variability suggests the model is sensitive to data perturbations for specific units.
+#'   }
+#'
+#'   \item{Model-level stability}{
+#'     Assesses consistency of overall model behavior across bootstrap iterations:
+#'     \itemize{
+#'       \item \strong{Mean effect variability}:
+#'             \eqn{\sigma_{\bar{\tau}} = \sqrt{\frac{1}{B-1}\sum_{b=1}^B (\bar{\tau}^{(b)} - \bar{\tau})^2}}
+#'             where \eqn{\bar{\tau}^{(b)}} is the ATE in iteration \eqn{b}
+#'       \item \strong{Pairwise prediction correlation}:
+#'             Mean and median of \eqn{\rho_{b,b'} = \text{corr}(\hat{\tau}^{(b)}, \hat{\tau}^{(b')})}
+#'             for all pairs of bootstrap iterations, measuring overall prediction consistency
+#'       \item \strong{Effect measure consistency}:
+#'             Standard deviations of ATT and ATC across iterations:
+#'             \eqn{\sigma_{ATT} = \sqrt{\frac{1}{B-1}\sum_{b=1}^B (ATT^{(b)} - \overline{ATT})^2}}
+#'             and similarly for ATC
+#'     }
+#'     Low model-level variability indicates the model produces consistent aggregate results.
+#'   }
+#'
+#'   \item{Ranking consistency}{
+#'     Evaluates whether units maintain their relative ordering of treatment effects across
+#'     different bootstrap samples using Kendall's tau rank correlation:
+#'     \itemize{
+#'       \item \strong{Mean Kendall's tau}:
+#'             \eqn{\bar{\tau}_K = \frac{2}{B(B-1)}\sum_{b<b'} \tau_K(R_b, R_{b'})}
+#'             where \eqn{R_b} is the rank vector of treatment effects in iteration \eqn{b},
+#'             and \eqn{\tau_K} is Kendall's tau between two rankings
+#'       \item \strong{Interpretation}: Values close to 1 indicate perfect ranking preservation,
+#'             values near 0 suggest random ordering, and negative values indicate reversed rankings
+#'     }
+#'     High ranking consistency suggests the model reliably identifies which units benefit most
+#'     from treatment, regardless of data variations.
+#'   }
+#' }
+#'
+#' @section Interpretation Guidelines:
+#' \itemize{
+#'   \item \strong{Low variability} (small σ, CV < 0.1): Model is stable and reliable
+#'   \item \strong{Moderate variability} (CV 0.1-0.5): Some sensitivity to data variations
+#'   \item \strong{High variability} (CV > 0.5, wide prediction intervals): Model is unstable
+#'   \item \strong{High ranking consistency} (Kendall's tau > 0.7): Reliable prioritization of units
+#'   \item \strong{Low ranking consistency} (Kendall's tau < 0.3): Unreliable unit ordering
+#' }
+#'
+#' These metrics help identify whether treatment effect heterogeneity is robustly estimated
+#' or may be sensitive to specific data configurations, guiding model selection and
+#' interpretation of individual treatment effects.
 #'
 #' @section Policy Learning:
 #' When `policy = TRUE`, the function computes optimal treatment assignment rules:
@@ -126,27 +220,35 @@
 #'   mode = "classification"
 #' )
 #'
-#' # Example 2: With policy learning (greedy threshold)
-#' s_fit_policy <- s_learner(
-#'   base_model = "xgb",
+#' # Example 2: With stability assessment and bootstrap CIs
+#' s_fit_stable <- s_learner(
+#'   base_model = "random_forest",
 #'   data = data,
 #'   recipe = rec,
 #'   treatment = "treatment",
-#'   policy = TRUE,
-#'   policy_method = "greedy"
+#'   mode = "regression",
+#'   bootstrap = TRUE,
+#'   stability = TRUE,
+#'   bootstrap_iters = 200
 #' )
 #'
-#' # Example 3: With policy tree and bootstrap CIs
+#' # Example 3: With policy tree and comprehensive assessment
 #' s_fit_full <- s_learner(
-#'   base_model = "glmnet",
+#'   base_model = "xgb",
 #'   data = data,
 #'   recipe = rec,
 #'   treatment = "treatment",
 #'   policy = TRUE,
 #'   policy_method = "tree",
 #'   bootstrap = TRUE,
-#'   bootstrap_iters = 200
+#'   stability = TRUE,
+#'   bootstrap_iters = 500
 #' )
+#'
+#' # Access stability measures
+#' stability_info <- s_fit_full$stability_measures
+#' print(stability_info$sd_prediction)  # Unit-level variability
+#' print(stability_info$sd_att_iter)    # ATT consistency across iterations
 #' }
 #' @seealso
 #' \code{\link[=predict.causal_learner]{predict.causal_learner()}} for making predictions on new data
@@ -577,7 +679,7 @@ s_learner <- function(
       stab_y1_list <- lapply(stability_list, function(x) x$y1_stab)
       stab_y0_list <- lapply(stability_list, function(x) x$y0_stab)
 
-      # Convert to matrix (all should have same length for original data)
+      # Convert to matrix
       stab_tau_boot <- do.call(cbind, stab_tau_list)
       boot_y1_orig <- do.call(cbind, stab_y1_list)
       boot_y0_orig <- do.call(cbind, stab_y0_list)
