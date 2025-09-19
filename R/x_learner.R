@@ -380,27 +380,12 @@ x_learner <- function(
   y1 <- predict(tau1_fit, new_data = data_aug)$.pred
   y0 <- predict(tau0_fit, new_data = data_aug)$.pred
 
-  # Propensity Score model
-
-  # Recipe for the propensity model
-  prop_recipe <- recipe(treatment ~ ., data = data) %>%
-    step_rm(outcome)  # remove outcome from predictors
-
-  # Logistic regression model spec
-  prop_model <- logistic_reg() %>%
-    set_engine("glm") %>%
-    set_mode("classification")
-
-  # Workflow
-  prop_workflow <- workflow() %>%
-    add_model(prop_model) %>%
-    add_recipe(prop_recipe)
-
-  # Fit model
+  # Propensity Score model and compute e_hat
+  prop_recipe <- recipe(as.formula(paste(treatment, "~ .")), data = data) %>% step_rm(all_of(outcome))
+  prop_model <- logistic_reg() %>% set_engine("glm") %>% set_mode("classification")
+  prop_workflow <- workflow() %>% add_model(prop_model) %>% add_recipe(prop_recipe)
   prop_fit <- fit(prop_workflow, data = data)
-
-  # Predict propensity scores (probability of treatment)
-  e_hat <- predict(prop_fit, new_data = data, type = "prob")$.pred_1
+  e_hat <- predict(prop_fit, new_data = data, type = "prob") %>% pull(.pred_1)
 
   # Calculate effect measures for Classification model
   if (mode == "classification") {
@@ -465,46 +450,67 @@ x_learner <- function(
       names(res) <- c("lower", "upper")
       res
     }
-    # Define n based on counterfactual data
-    n <- nrow(data)
+    # Prepare model spec with hyperparams once
+    if (length(fixed_params) > 0) {
+      base_spec <- parsnip::set_args(base_spec, !!!fixed_params)
+    }
+    if (length(tuning_params) > 0 && exists("best_result")) {
+      base_spec <- tune::finalize_model(base_spec, best_result)
+    }
     # Progress Bar
     pb <- utils::txtProgressBar(max = bootstrap_iters, style = 3)
 
-    # Bootstrap for CIs for the effects
+    # Define n based on counterfactual data
+    n <- nrow(data)
+    # Lists to store predictions and effects
+    ate_boot_list <- numeric(bootstrap_iters)
+    att_boot_list <- numeric(bootstrap_iters)
+    atc_boot_list <- numeric(bootstrap_iters)
 
-      # Matrices to store predictions and propensity
-      boot_y1         <- matrix(NA, n, bootstrap_iters)
-      boot_y0         <- matrix(NA, n, bootstrap_iters)
-      boot_propensity <- matrix(NA, n, bootstrap_iters)
-      boot_y0_orig    <- matrix(NA, n, bootstrap_iters)
-      boot_y1_orig    <- matrix(NA, n, bootstrap_iters)
-
+    # For additional classification measures
+    if (mode == "classification") {
+      rr_boot_list <- numeric(bootstrap_iters)
+      rd_boot_list <- numeric(bootstrap_iters)
+      or_boot_list <- numeric(bootstrap_iters)
+      nnt_boot_list <- numeric(bootstrap_iters)
+      pns_boot_list <- numeric(bootstrap_iters)
+      pn_boot_list <- numeric(bootstrap_iters)
+    }
+    # For stability
+    if (stability) {
+      stability_list <- vector("list", bootstrap_iters)
+    }
       # Loop over bootstrap iterations
       for (i in seq_len(bootstrap_iters)) {
         utils::setTxtProgressBar(pb, i)
 
-        # Sample with replacement from original data
-        boot_idx <- sample(nrow(data), replace = TRUE)
-        boot_data <- data[boot_idx, ]
+        tryCatch({
+          # Sample with replacement
+          boot_idx <- sample(nrow(data), replace = TRUE)
+          boot_data <- data[boot_idx, ]
 
-        # First Stage Recipes based on the original one with the bootstrap sample
+          # Create counterfactual versions of the bootstrap sample
+          boot_data_1 <- boot_data  # Everyone treated
+          boot_data_0 <- boot_data  # Everyone control
 
-        # Subset bootstrap sample for treated and control
-        boot_data_1 <- boot_data %>% filter(!!sym(treatment) == 1)
-        boot_data_0 <- boot_data %>% filter(!!sym(treatment) == 0)
+          if (is.factor(boot_data[[treatment]])) {
+            boot_data_1[[treatment]] <- factor(1, levels = levels(boot_data[[treatment]]))
+            boot_data_0[[treatment]] <- factor(0, levels = levels(boot_data[[treatment]]))
+          } else {
+            boot_data_1[[treatment]] <- 1
+            boot_data_0[[treatment]] <- 0
+          }
+          # Extract original steps from the input recipe
+          original_steps <- recipe$steps
 
-        # Extract original steps from the input recipe
-        original_steps <- recipe$steps
+          # Create new recipe for bootstrap sample
+          boot_recipe_1 <- recipe(outcome ~ ., data = boot_data)
+          boot_recipe_0 <- recipe(outcome ~ ., data = boot_data)
 
-        # Create new untrained recipes for the bootstrap samples
-        boot_recipe_1 <- recipe(outcome ~ ., data = boot_data_1)
-        boot_recipe_0 <- recipe(outcome ~ ., data = boot_data_0)
-
-        # Add original steps to the new recipes
-        for(step in original_steps) {
-          boot_recipe_1 <- boot_recipe_1 %>% add_step(step)
-          boot_recipe_0 <- boot_recipe_0 %>% add_step(step)
-        }
+          for(step in original_steps) {
+            boot_recipe_1 <- boot_recipe_1 %>% add_step(step)
+            boot_recipe_0 <- boot_recipe_0 %>% add_step(step)
+          }
         # First Stage Workflows based on the original model with bootstrap rebuild recipes
         boot_workflow_1 <- workflow() %>% add_model(model_base_1) %>% add_recipe(boot_recipe_1)
         boot_workflow_0 <- workflow() %>% add_model(model_base_0) %>% add_recipe(boot_recipe_0)
@@ -532,33 +538,63 @@ x_learner <- function(
               boot_mu1_hat = boot_mu1_hat,
               boot_mu0_hat = boot_mu0_hat,
               # For treated units: observed Y minus predicted control outcome
-              boot_D1 = if_else(treatment == 1, boot_y_num - boot_mu1_hat, NA_real_),
+              boot_D1 = if_else(!!sym(treatment) == 1, boot_y_num - boot_mu0_hat, NA_real_),
               # For control units: predicted treated outcome minus observed Y
-              boot_D0 = if_else(treatment == 0, boot_mu0_hat - boot_y_num, NA_real_)
+              boot_D0 = if_else(!!sym(treatment) == 0, boot_mu1_hat - boot_y_num, NA_real_)
             )
         } else {
           boot_y_num <- boot_data[[outcome]]
-
           # Compute pseudo-effects (D1, D0) in the bootstrap sample.
           boot_aug <- boot_data %>%
             mutate(
               boot_mu1_hat = boot_mu1_hat,
               boot_mu0_hat = boot_mu0_hat,
               # For treated units: observed Y minus predicted control outcome
-              boot_D1 = if_else(treatment == 1, boot_y_num - boot_mu0_hat, NA_real_),
+              boot_D1 = if_else(!!sym(treatment) == 1, boot_y_num - boot_mu0_hat, NA_real_),
               # For control units: predicted treated outcome minus observed Y
-              boot_D0 = if_else(treatment == 0, boot_mu1_hat - boot_y_num, NA_real_)
+              boot_D0 = if_else(!!sym(treatment) == 0, boot_mu1_hat - boot_y_num, NA_real_)
             )
         }
+        # Create a general recipe for second stage models
+        stage_2_recipe <- function(data, y, predictors){
+          formula_str <- paste(y, "~ .")
+          res <- recipe(as.formula(formula_str),data,treatment_var,outcome_var) %>%
+            update_role(all_of(predictors), new_role = "predictor") %>%
+            # Remove first stage predictions and counterpart D1/D0
+            step_rm(
+              all_of(c(
+                treatment_var,
+                outcome_var,
+                "boot_mu1_hat",
+                "boot_mu0_hat",
+                if (y == "boot_D0") "boot_D1" else "boot_D0"
+              ))
+            ) %>%
+            # Essential preprocessing for treatment effect modeling
+            step_center(all_numeric_predictors()) %>%                 # Center for regularization
+            step_scale(all_numeric_predictors()) %>%                  # Scale for regularization
+            step_nzv(all_numeric_predictors()) %>%                    # Remove near-zero variance
+            step_corr(all_numeric_predictors(), threshold = 0.9) %>%  # Remove high correlation
+            # Handle factors
+            step_dummy(all_nominal_predictors(), one_hot = FALSE)
+
+          return(res)
+        }
         # Second Stage Recipes on the bootstrap sample boot_aug
-        boot_recipe_2 <- recipe(boot_D1 ~ ., data = boot_aug %>% filter(!!sym(treatment) == 1)) %>%
-          update_role(all_of(predictors), new_role = "predictor") %>%
-          step_rm(treatment, boot_D0, boot_mu1_hat, boot_mu0_hat)
-
-        boot_recipe_3 <- recipe(boot_D0 ~ ., data = boot_aug %>% filter(!!sym(treatment) == 0)) %>%
-          update_role(all_of(predictors), new_role = "predictor") %>%
-          step_rm(treatment, boot_D1, boot_mu1_hat, boot_mu0_hat)
-
+        boot_recipe_2 <- stage_2_recipe(
+          data = boot_aug %>% filter(!!sym(treatment) == 1),
+          y = "boot_D1",
+          predictors = predictors,
+          treatment_var = treatment,
+          outcome_var = outcome
+          )
+        boot_recipe_3 <- stage_2_recipe(
+          data = boot_aug %>% filter(!!sym(treatment) == 0),
+          y = "boot_D0",
+          predictors = predictors,
+          treatment_var = treatment,
+          outcome_var = outcome
+        )
         # Fit the Second Stage  models on the bootstrap sample.
         boot_fit_2 <- workflow() %>%
           add_model(rand_forest) %>%
@@ -571,12 +607,55 @@ x_learner <- function(
           fit(data = boot_aug %>% filter(!!sym(treatment) == 0))
 
         # Predict on the bootstrap sample Stage 2 Regression with pseudo residuals D1 D0
-        boot_y1[,i] <- predict(boot_fit_2, new_data = boot_aug)$.pred
-        boot_y0[,i] <- predict(boot_fit_3, new_data = boot_aug)$.pred
+        boot_y1 <- predict(boot_fit_2, new_data = boot_aug)$.pred
+        boot_y0 <- predict(boot_fit_3, new_data = boot_aug)$.pred
 
+        # Retrain the Propensity Score model and compute e_hat
+        boot_prop_recipe <- recipe(as.formula(paste(treatment, "~ .")), data = boot_data) %>% step_rm(all_of(outcome))
+        boot_prop_model <- logistic_reg() %>% set_engine("glm") %>% set_mode("classification")
+        prop_workflow <- workflow() %>% add_model(boot_prop_model) %>% add_recipe(boot_prop_recipe)
+        boot_prop_fit <- fit(boot_prop_workflow, data = boot_data)
+        boot_e_hat <- predict(boot_prop_fit, new_data = boot_data, type = "prob") %>% pull(.pred_1)
+
+        # Compute individual treatment effects for this bootstrap sample
+        tau_i  <- (1 - boot_e_hat) * boot_y1 + boot_e_hat * boot_y0
+
+        # Store overall effects for this iteration
+        ate_boot_list[i] <- mean(tau_i, na.rm = TRUE)
+
+        # Get treatment indicator for this bootstrap sample
+        treat_boot <- boot_data[[treatment]]
+        if (is.factor(treat_boot)) {
+          treat_boot <- as.numeric(as.character(treat_boot)) == 1
+        } else {
+          treat_boot <- treat_boot == 1
+        }
+        # ATT and ATC for this bootstrap sample
+        if (sum(treat_boot) > 0) {
+          att_boot_list[i] <- mean(tau_i[treat_boot], na.rm = TRUE)
+        } else {
+          att_boot_list[i] <- NA
+        }
+        if (sum(!treat_boot) > 0) {
+          atc_boot_list[i] <- mean(tau_i[!treat_boot], na.rm = TRUE)
+        } else {
+          atc_boot_list[i] <- NA
+        }
+        # Additional classification measures
+        if (mode == "classification") {
+          mean_y1_i <- mean(boot_y1, na.rm = TRUE)
+          mean_y0_i <- mean(boot_y0, na.rm = TRUE)
+
+          rr_boot_list[i] <- mean_y1_i / mean_y0_i
+          rd_boot_list[i] <- mean_y1_i - mean_y0_i
+          or_boot_list[i] <- (mean_y1_i/(1-mean_y1_i)) / (mean_y0_i/(1-mean_y0_i))
+
+          nnt_boot_list[i] <- ifelse(abs(rd_boot_list[i]) < 1e-10, NA, 1 / rd_boot_list[i])
+          pns_boot_list[i] <- mean(boot_y1 * (1 - boot_y0), na.rm = TRUE)
+          pn_boot_list[i] <- pns_boot_list[i] / mean_y1_i
+        }
         # Stability measures from pseudo-outcomes computed on the original data
         if (stability) {
-
           # Predict on original data using first-stage fits
           if (mode == "classification") {
             boot_stab_y_num <- as.numeric(data[[outcome]]) - 1
@@ -587,57 +666,100 @@ x_learner <- function(
             boot_stab_m1 <- predict(boot_fit_1, new_data = data)$.pred
             boot_stab_m0 <- predict(boot_fit_0, new_data = data)$.pred
           }
-
           # Compute pseudo-outcomes for the original data
           D1 <- if_else(data[[treatment]] == 1, boot_stab_y_num - boot_stab_m0, NA_real_)
           D0 <- if_else(data[[treatment]] == 0, boot_stab_m1 - boot_stab_y_num, NA_real_)
 
-          # Combine pseudo-outcomes with the original data
+          # Combine pseudo-outcomes with the original data - THIS IS CORRECT!
           data_orig_aug <- data %>% mutate(
             boot_D1 = D1,
             boot_D0 = D0,
             boot_mu1_hat = boot_stab_m1,
             boot_mu0_hat = boot_stab_m0
           )
+          # Predict with second-stage bootstrap fits on the augmented original data
+          boot_stab_g1 <- predict(boot_fit_2, new_data = data_orig_aug)$.pred  # g1 on all units
+          boot_stab_g0 <- predict(boot_fit_3, new_data = data_orig_aug)$.pred  # g0 on all units
 
-          # Predict with second-stage bootstrap fits on original data
-          boot_y1_orig[, i] <- predict(boot_fit_2, new_data = data_orig_aug)$.pred
-          boot_y0_orig[, i] <- predict(boot_fit_3, new_data = data_orig_aug)$.pred
+          # Final treatment effect estimate for stability
+          boot_stab_tau <- (1 - e_hat) * boot_stab_g1 + e_hat * boot_stab_g0
+
+          stability_list[[i]] <- list(
+            tau_stab = boot_stab_tau,
+            g1_stab = boot_stab_g1,
+            g0_stab = boot_stab_g0
+          )
         }
-
-        # Propensity model recipe on the boostrap sample
-        boot_prop_recipe <- recipe(treatment ~ ., data = boot_data) %>%
-          step_rm(outcome)
-
-        # Propensity model workflow with boot_prop_recipe
-        boot_prop_workflow <- workflow() %>%
-          add_model(prop_model) %>%
-          add_recipe(boot_prop_recipe)
-
-        # Estimate Propensity on the bootstrap sample
-        boot_prop_fit <- fit(boot_prop_workflow, data = boot_data)
-
-        # Predict propensity scores (probability of treatment)
-        boot_propensity[,i] <- predict(boot_prop_fit, new_data = data, type = "prob")$.pred_1
-
-        # Compute stability measures if requested
+      }, error = function(e) {
+        message("Bootstrap iteration ", i, " failed: ", e$message)
+        # Store NA values for failed iteration
+        ate_boot_list[i] <- NA
+        att_boot_list[i] <- NA
+        atc_boot_list[i] <- NA
+        if (mode == "classification") {
+          rr_boot_list[i] <- NA
+          rd_boot_list[i] <- NA
+          or_boot_list[i] <- NA
+          nnt_boot_list[i] <- NA
+          pns_boot_list[i] <- NA
+          pn_boot_list[i] <- NA
+        }
         if (stability) {
+          stability_list[[i]] <- list(
+            tau_stab = rep(NA, nrow(data)),
+            g1_stab = rep(NA, nrow(data)),
+            g0_stab = rep(NA, nrow(data))
+          )
+        }
+      })
+  }
+    # Compute CIs from the bootstrap distributions
+    effect_measures_boots <- list(
+      ATE = c(estimate = mean(ate_boot_list, na.rm = TRUE),
+              ci(ate_boot_list, alpha = bootstrap_alpha)),
+      ATT = c(estimate = mean(att_boot_list, na.rm = TRUE),
+              ci(att_boot_list, alpha = bootstrap_alpha)),
+      ATC = c(estimate = mean(atc_boot_list, na.rm = TRUE),
+              ci(atc_boot_list, alpha = bootstrap_alpha))
+    )
+    # Additional classification measures
+    if (mode == "classification") {
+      effect_measures_boots <- c(effect_measures_boots, list(
+        RR = c(estimate = mean(rr_boot_list, na.rm = TRUE),
+               ci(rr_boot_list, alpha = bootstrap_alpha)),
+        RD = c(estimate = mean(rd_boot_list, na.rm = TRUE),
+               ci(rd_boot_list, alpha = bootstrap_alpha)),
+        OR = c(estimate = mean(or_boot_list, na.rm = TRUE),
+               ci(or_boot_list, alpha = bootstrap_alpha)),
+        NNT = c(estimate = mean(nnt_boot_list, na.rm = TRUE),
+                ci(nnt_boot_list, alpha = bootstrap_alpha)),
+        PNS = c(estimate = mean(pns_boot_list, na.rm = TRUE),
+                ci(pns_boot_list, alpha = bootstrap_alpha)),
+        PN = c(estimate = mean(pn_boot_list, na.rm = TRUE),
+               ci(pn_boot_list, alpha = bootstrap_alpha))
+      ))
+    }
+    # Compute stability measures if requested
+    if (stability) {
+      # Extract stability predictions
+      stab_tau_list <- lapply(stability_list, function(x) x$tau_stab)
+      # Convert to matrix
+      stab_tau_boot <- do.call(cbind, stab_tau_list)
 
-          # Compute tau stability
-          stab_tau_boot <- boot_y1_orig - boot_y0_orig
+      ## Unit Level Measures
+      unit_sd <- apply(stab_tau_boot, 1, sd, na.rm = TRUE)
+      unit_mean <- rowMeans(stab_tau_boot, na.rm = TRUE)
+      unit_cv <- unit_sd / (unit_mean + 1e-10)
+      unit_ci <- t(apply(stab_tau_boot, 1, quantile, probs = c(0.025, 0.975), na.rm = TRUE))
+      unit_range <- apply(stab_tau_boot, 1, function(x) diff(range(x, na.rm = TRUE)))
 
-          ## Unit Level Measures
-          unit_sd <- apply(stab_tau_boot, 1 , sd , na.rm = TRUE)                                         # Unit-level SD of predictions
-          unit_mean <- rowMeans(stab_tau_boot, na.rm = TRUE)
-          unit_cv <- unit_sd / (unit_mean + 1e-10)                                                       # Unit-level Coefficient of Variation (CV)
-          unit_ci <- t(apply(stab_tau_boot, 1, quantile, probs = c(0.025, 0.975), na.rm = TRUE))         # Unit-level Prediction Quantiles 95%
-          unit_range <- apply(stab_tau_boot, 1, function(x) max(x, na.rm = TRUE) - min(x, na.rm = TRUE)) # Unit-level Range (Max - Min)
+      # Kendall's tau between all pairs of bootstrap rankings
+      rank_corr_matrix <- matrix(NA, nrow = bootstrap_iters, ncol = bootstrap_iters)
 
-          # Kendall’s tau between all pairs of bootstrap rankings
-          rank_corr_matrix <- matrix(NA, ncol = ncol(stab_tau_boot), nrow = ncol(stab_tau_boot))
-
-          for (i in 1:(ncol(stab_tau_boot)-1)) {
-            for (j in (i+1):ncol(stab_tau_boot)) {
+      if (bootstrap_iters > 1) {
+        for (i in 1:(bootstrap_iters-1)) {
+          for (j in (i+1):bootstrap_iters) {
+            if (length(stab_tau_boot[, i]) == length(stab_tau_boot[, j])) {
               rank_corr_matrix[i, j] <- cor(
                 rank(stab_tau_boot[, i]),
                 rank(stab_tau_boot[, j]),
@@ -646,113 +768,84 @@ x_learner <- function(
               )
             }
           }
-          # Mean rank correlation across iterations
-          mean_rank_corr <- mean(rank_corr_matrix, na.rm = TRUE)
-
-          ## Model-level stability measures
-          mean_pred_iter <- colMeans(stab_tau_boot , na.rm = TRUE)          # Mean predicted effect per iteration
-          sd_mean_effect  <- sd(colMeans(stab_tau_boot, na.rm = TRUE))      # SD of mean effect
-          cor_pred_iter <- cor(stab_tau_boot,use = "pairwise.complete.obs") # Correlation of predictions across iterations
-          # Summary statistics of pairwise correlations
-          iter_corr_vals <- cor_pred_iter[upper.tri(cor_pred_iter)]
-          mean_pairwise_corr <- mean(iter_corr_vals, na.rm = TRUE)
-          median_pairwise_corr <- median(iter_corr_vals, na.rm = TRUE)
-
-          # Treatment vector
-          treat_vec <- if (is.factor(data[[treatment]])) {
-            as.numeric(as.character(data[[treatment]])) == 1
-          } else {
-            data[[treatment]] == 1
-          }
-          # Indexing
-          treated_idx <- which(treat_vec)
-          control_idx <- which(!treat_vec)
-
-          # Bootstrap ATT / ATC (per iteration)
-          att_iter <- colMeans(stab_tau_boot[treated_idx, , drop = FALSE], na.rm = TRUE)
-          atc_iter <- colMeans(stab_tau_boot[control_idx, , drop = FALSE], na.rm = TRUE)
-
-          # SD of ATT / ATC Bootstrap per iteration
-          sd_att_iter <- sd(att_iter)
-          sd_atc_iter <- sd(atc_iter)
-
-          # Store all in a list
-          stability_measures <- list(
-            sd_prediction = unit_sd,                 # SD of predictions
-            cv = unit_cv,                            # Coefficient of Variation CV
-            prediction_quantiles = unit_ci,          # Unit-level Prediction Quantiles 95%
-            max_min_range = unit_range,              # Unit-level Range (Max - Min)
-            mean_rank_corr = mean_rank_corr,         # Mean rank correlation across iterations
-            mean_pred_effect_iter = mean_pred_iter,  # Mean predicted effect per iteration
-            sd_mean_effect = sd_mean_effect,         # SD of mean effect
-            cor_pred_iter = cor_pred_iter,                # Correlation of predictions across iterations
-            mean_pairwise_corr = mean_pairwise_corr,      # Mean correlation of predictions across iterations
-            median_pairwise_corr = median_pairwise_corr,  # Median correlation of predictions across iterations
-            sd_att_iter = sd_att_iter,                    # SD of ATT Bootstrap per iteration
-            sd_atc_iter = sd_atc_iter                     # SD of ATC Bootstrap per iteration
-            )
-          }
-      }
-      # Compute Effect measures for Regression (Core Measures)
-      boot_tau  <- (1 - boot_propensity) * boot_y1 + boot_propensity * boot_y0 # individual treatment effect (tau)
-      ate_boot <- colMeans(boot_tau, na.rm = TRUE)
-      att_boot <- colMeans(boot_tau[data[[treatment]] == 1, ], na.rm = TRUE)
-      atc_boot <- colMeans(boot_tau[data[[treatment]] == 0, ], na.rm = TRUE)
-
-      # Compute Effect measures for Specific for Classification
-      if (mode == "classification") {
-
-        # For ratio-based measures, compute per iteration then take CI
-        mean_y1 <- colMeans(boot_y1, na.rm = TRUE)
-        mean_y0 <- colMeans(boot_y0, na.rm = TRUE)
-
-        rr_boot <- mean_y1 / mean_y0                              # Risk Ratio
-        rd_boot <- mean_y1 - mean_y0                              # Risk Difference
-        or_boot <- (mean_y1/(1-mean_y1)) / (mean_y0/(1-mean_y0))  # Odds Ratio
-
-        # For NNT, handle infinite values from small risk differences
-        nnt_boot <- 1 / rd_boot
-        nnt_boot[abs(rd_boot) < 1e-10] <- NA
-
-        # For PNS and PN
-        pns_boot <- colMeans(boot_y1 * (1 - boot_y0), na.rm = TRUE)
-        pn_boot <- pns_boot / mean_y1
-
-        # Compute CIs for all measures
-        effect_measures_boots <- list(
-          ATE = c(estimate = mean(ate_boot, na.rm = TRUE),
-                  ci(ate_boot, alpha = bootstrap_alpha)),
-          ATT = c(estimate = mean(att_boot, na.rm = TRUE),
-                  ci(att_boot, alpha = bootstrap_alpha)),
-          ATC = c(estimate = mean(atc_boot, na.rm = TRUE),
-                  ci(atc_boot, alpha = bootstrap_alpha)),
-          RR = c(estimate = mean(rr_boot, na.rm = TRUE),
-                 ci(rr_boot, alpha = bootstrap_alpha)),
-          RD = c(estimate = mean(rd_boot, na.rm = TRUE),
-                 ci(rd_boot, alpha = bootstrap_alpha)),
-          OR = c(estimate = mean(or_boot, na.rm = TRUE),
-                 ci(or_boot, alpha = bootstrap_alpha)),
-          NNT = c(estimate = mean(nnt_boot, na.rm = TRUE),
-                  ci(nnt_boot, alpha = bootstrap_alpha)),
-          PNS = c(estimate = mean(pns_boot, na.rm = TRUE),
-                  ci(pns_boot, alpha = bootstrap_alpha)),
-          PN = c(estimate = mean(pn_boot, na.rm = TRUE),
-                 ci(pn_boot, alpha = bootstrap_alpha))
-        )
-        # Return only the effect measures for Regression
-      }else{
-        # Compute CIs for all measures
-        effect_measures_boots <- list(
-          ATE = c(estimate = mean(ate_boot, na.rm = TRUE),
-                  ci(ate_boot, alpha = bootstrap_alpha)),
-          ATT = c(estimate = mean(att_boot, na.rm = TRUE),
-                  ci(att_boot, alpha = bootstrap_alpha)),
-          ATC = c(estimate = mean(atc_boot, na.rm = TRUE),
-                  ci(atc_boot, alpha = bootstrap_alpha))
-          )
         }
-      # Close progress bar
-      close(pb)
+      }
+      # Mean Rank Correlation
+      mean_rank_corr <- mean(rank_corr_matrix, na.rm = TRUE)
+
+      ## Model-level stability measures
+      mean_pred_iter <- colMeans(stab_tau_boot, na.rm = TRUE)
+      sd_mean_effect <- sd(mean_pred_iter, na.rm = TRUE)
+
+      # Correlation matrix Correlation prediction per iteration
+      cor_pred_iter <- matrix(NA, nrow = bootstrap_iters, ncol = bootstrap_iters)
+      if (bootstrap_iters > 1) {
+        for (i in 1:bootstrap_iters) {
+          for (j in 1:bootstrap_iters) {
+            if (i != j && length(stab_tau_boot[, i]) == length(stab_tau_boot[, j])) {
+              cor_pred_iter[i, j] <- cor(stab_tau_boot[, i], stab_tau_boot[, j],
+                                         use = "pairwise.complete.obs")
+            }
+          }
+        }
+      }
+      # Summary Cor Statistics
+      iter_corr_vals <- cor_pred_iter[upper.tri(cor_pred_iter)]
+      mean_pairwise_corr <- mean(iter_corr_vals, na.rm = TRUE)
+      median_pairwise_corr <- median(iter_corr_vals, na.rm = TRUE)
+
+      # Treatment vector from original data
+      treat_vec <- if (is.factor(data[[treatment]])) {
+        as.numeric(as.character(data[[treatment]])) == 1
+      } else {
+        data[[treatment]] == 1
+      }
+      # Indices for the original data
+      treated_idx <- which(treat_vec)
+      control_idx <- which(!treat_vec)
+
+      # Check dimensions match
+      if (nrow(stab_tau_boot) != length(treat_vec)) {
+        warning(sprintf("Stability matrix has %d rows but treatment vector has %d observations.
+                   Stability measures may be inaccurate.",nrow(stab_tau_boot), length(treat_vec)))
+      }
+      # Bootstrap ATT/ATC
+      if (nrow(stab_tau_boot) >= max(treated_idx) && length(treated_idx) > 0) {
+        att_iter <- colMeans(stab_tau_boot[treated_idx, , drop = FALSE], na.rm = TRUE)
+        sd_att_iter <- sd(att_iter, na.rm = TRUE)
+      } else {
+        att_iter <- rep(NA, bootstrap_iters)
+        sd_att_iter <- NA
+        warning("Treated indices out of bounds for stability matrix")
+      }
+      if (nrow(stab_tau_boot) >= max(control_idx) && length(control_idx) > 0) {
+        atc_iter <- colMeans(stab_tau_boot[control_idx, , drop = FALSE], na.rm = TRUE)
+        sd_atc_iter <- sd(atc_iter, na.rm = TRUE)
+      } else {
+        atc_iter <- rep(NA, bootstrap_iters)
+        sd_atc_iter <- NA
+        warning("Control indices out of bounds for stability matrix")
+      }
+      # Store all in a list
+      stability_measures <- list(
+        sd_prediction = unit_sd,
+        cv = unit_cv,
+        prediction_quantiles = unit_ci,
+        max_min_range = unit_range,
+        mean_rank_corr = mean_rank_corr,
+        mean_pred_effect_iter = mean_pred_iter,
+        sd_mean_effect = sd_mean_effect,
+        cor_pred_iter = cor_pred_iter,
+        mean_pairwise_corr = mean_pairwise_corr,
+        median_pairwise_corr = median_pairwise_corr,
+        sd_att_iter = sd_att_iter,
+        sd_atc_iter = sd_atc_iter,
+        att_iterations = att_iter,
+        atc_iterations = atc_iter
+      )
+    }
+    # Close progress bar
+    close(pb)
   }
   # Policy Implementation
   if (policy) {
@@ -811,7 +904,8 @@ x_learner <- function(
         st_1_m_1 = model_fit_1,
         st_1_m_0 = model_fit_0,
         st_2_m_1 = tau1_fit,
-        st_2_m_0 = tau0_fit
+        st_2_m_0 = tau0_fit,
+        ps_model = prop_fit
         ),
       effect_measures = effect_measures,
       effect_measures_boots = if(bootstrap) effect_measures_boots else NULL,
