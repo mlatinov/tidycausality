@@ -47,7 +47,7 @@ test_that("bc_forest fit and predict",{
   expect_true(!is.null(fit_result$fit$fit$tau))
 
   # Predict on new data
-  preds <- predict(fit_result, new_data = data)
+  preds <- predict(fit_result,new_data = data)
   # Return have to be tibble of predictions
   expect_s3_class(preds, "tbl_df")
   expect_named(preds, c(".pred_tau",

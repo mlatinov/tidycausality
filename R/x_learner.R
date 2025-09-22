@@ -441,7 +441,7 @@ x_learner <- function(
     ATC = atc    # Average Treatment effect on Control
     )
   }
-  # Bootstrap confidence intervals for T-learner
+  # Bootstrap confidence intervals for X-learner
   if (bootstrap) {
     message("Running ", bootstrap_iters, " bootstrap iterations...")
     # Helper function to compute CI

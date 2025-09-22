@@ -1,5 +1,5 @@
 
-#### S Learner ####
+#### S-Learner (Single-Learner) for Heterogeneous Treatment Effect Estimation ####
 
 # Package imports
 #' @import tidymodels
@@ -9,250 +9,452 @@
 #' @title S-Learner for Causal Treatment Effect Estimation
 #'
 #' @description
-#' Implements the S-learner approach for estimating heterogeneous treatment effects.
-#' The S-learner fits a single model to predict outcomes using both covariates and
-#' treatment indicators, then estimates treatment effects by comparing predictions
-#' under treatment and control counterfactuals.
+#' Implements the S-Learner (Single-Learner) framework for estimating Conditional Average Treatment Effects (CATE) and Individual Treatment Effects (ITE). The S-Learner is a meta-algorithm that incorporates the treatment indicator as a feature within a single predictive model. Treatment effect estimates, or \(\hat{\tau}_i\), for each unit \(i\) are derived by contrasting the model's predictions under two counterfactual states: all units treated (\(T=1\)) and all units untreated (\(T=0\)).
 #'
-#' The function supports:
-#' - Multiple base learners (random forest, MARS, XGBoost, and glmnet)
-#' - Both regression and classification problems
-#' - Comprehensive effect measures (ATE, ATT, ATC, RR, OR, NNT, etc.)
-#' - Hyperparameter tuning via grid search or Bayesian optimization
-#' - Bootstrap confidence intervals for all effect measures
-#' - Model stability assessment across bootstrap iterations
-#' - Custom preprocessing via recipes
-#' - Policy learning for treatment assignment (greedy threshold and policy tree methods)
+#' This function provides a comprehensive suite for causal inference, including:
+#' \itemize{
+#'   \item Support for multiple high-performance base learners (Random Forest, MARS, XGBoost, GLMNet)
+#'   \item Handling of both continuous (regression) and binary (classification) outcomes
+#'   \item Estimation of a wide array of causal effect measures (ATE, ATT, ATC, RR, OR, NNT, etc.)
+#'   \item Rigorous hyperparameter tuning via grid search with optional Bayesian optimization
+#'   \item Non-parametric uncertainty quantification via bootstrap confidence intervals
+#'   \item Advanced model stability and robustness diagnostics across bootstrap iterations
+#'   \item Flexible data preprocessing via the \code{recipes} package
+#'   \item Policy learning for optimal treatment assignment rules (greedy thresholding and policy trees)
+#' }
 #'
 #' @details
-#' The S-learner works by:
-#' 1. Fitting a single model that includes both covariates and treatment indicator
-#' 2. Creating counterfactual datasets where all units are "treated" and "untreated"
-#' 3. Predicting outcomes for both scenarios
-#' 4. Calculating treatment effects as the difference between predictions
 #'
-#' The stability assessment feature provides insights into model reliability across
-#' bootstrap iterations, including unit-level prediction variability and model-level
-#' consistency measures.
+#' \subsection{The S-Learner Algorithm}{
+#' The S-Learner operates through a four-step process:
+#' \enumerate{
+#'   \item \strong{Model Fitting:} A single model \(M\) is trained to predict the outcome \(Y\) using the covariate matrix \(X\) and the treatment indicator \(T\) as input features: \(\hat{Y} = M(X, T)\)
+#'   \item \strong{Counterfactual Prediction:} Two counterfactual datasets are created:
+#'     \itemize{
+#'       \item \(X_{\text{treat}}\): The original covariates with \(T\) set to 1 for all units
+#'       \item \(X_{\text{control}}\): The original covariates with \(T\) set to 0 for all units
+#'     }
+#'   \item \strong{Prediction:} The trained model \(M\) is used to predict potential outcomes:
+#'     \deqn{\hat{Y}_i(1) = M(X_i, T=1)}{Yhat_i(T=1) = M(X_i, T=1)}
+#'     \deqn{\hat{Y}_i(0) = M(X_i, T=0)}{Yhat_i(T=0) = M(X_i, T=0)}
+#'   \item \strong{Effect Estimation:} The treatment effect for each unit \(i\) is calculated as the difference:
+#'     \deqn{\hat{\tau}_i = \hat{Y}_i(1) - \hat{Y}_i(0)}
+#'     Aggregate effects (ATE, ATT, ATC) are then computed by averaging these ITEs over the relevant subgroups
+#' }
+#' }
 #'
-#' The policy learning feature helps identify optimal treatment assignment rules:
-#' - Greedy threshold: Finds the treatment effect threshold that maximizes total gain
-#' - Policy tree: Learns a decision tree for treatment assignment based on covariates
+#' \subsection{Advantages and Limitations}{
+#' \itemize{
+#'   \item \strong{Advantage:} Simple to implement, data-efficient (uses one model), and can leverage any off-the-shelf supervised learning algorithm
+#'   \item \strong{Limitation:} The model may prioritize strong predictive features in \(X\) over the typically weaker treatment signal, potentially leading to underestimation of treatment effect heterogeneity (regularization-induced confounding)
+#' }
+#' The stability assessment and bootstrap features are critical for evaluating the reliability of the estimated effects.
+#' }
 #'
-#' @param base_model Either a parsnip model specification object, or a character string
-#'   specifying the base learner. Supported strings are:
-#'   - `"random_forest"`: Random forest (via ranger)
-#'   - `"mars"`: Multivariate adaptive regression splines
-#'   - `"xgb"`: XGBoost
-#'   - `"glmnet"`: Regularized regression
-#' @param mode Model type: `"regression"` or `"classification"`
-#' @param data A data frame containing the training data.
-#' @param recipe A `recipe` object (from `recipes` package) specifying preprocessing steps.
-#'   Must include the outcome and treatment variables.
-#' @param treatment A string specifying the name of the treatment variable column in `data`.
-#'   This variable should be binary (0/1 or FALSE/TRUE)
-#' @param tune_params A named list of hyperparameters for the base model. Values can be:
-#'   - Fixed (e.g., `mtry = 3`)
-#'   - Tuning parameters (e.g., `mtry = tune()`)
-#'   Only parameters valid for the selected model will be used. Defaults to empty list.
-#' @param resamples An `rset` object (e.g., from `rsample::vfold_cv()`) for tuning.
-#'   Required if any parameters in `tune_params` use `tune()`.
-#' @param grid Integer indicating number of grid points for tuning (passed to `tune_grid()`).
-#'   Defaults to 20.
-#' @param policy Logical. Whether to compute optimal treatment policy. Defaults to FALSE.
-#' @param policy_method Policy learning method: `"greedy"` (threshold-based) or
-#'   `"tree"` (policy tree). Required if `policy = TRUE`.
-#' @param metrics A `yardstick::metric_set()` of performance metrics for tuning.
-#'   If NULL, uses RMSE for regression or accuracy for classification.
-#' @param optimize Logical. Whether to perform Bayesian optimization after initial
-#'   grid search when tuning parameters. Defaults to FALSE.
-#' @param bootstrap Logical. Whether to perform bootstrap for confidence intervals.
-#'   Defaults to FALSE.
-#' @param bootstrap_iters Number of bootstrap iterations if `bootstrap = TRUE`.
-#'   Defaults to 100.
-#' @param bootstrap_alpha Alpha level for confidence intervals. Defaults to 0.05.
-#' @param stability Logical. Whether to compute model stability measures across bootstrap
-#'   iterations. Requires `bootstrap = TRUE`. Defaults to FALSE.
+#' @param base_model A parsnip model specification object (e.g., \code{rand_forest()}), or a character string specifying the base learner. Supported strings are:
+#'   \itemize{
+#'     \item \code{"random_forest"}: Random Forest (via \code{ranger::ranger()})
+#'     \item \code{"mars"}: Multivariate Adaptive Regression Splines (via \code{earth::earth()})
+#'     \item \code{"xgb"}: Extreme Gradient Boosting (via \code{xgboost::xgb.train()})
+#'     \item \code{"glmnet"}: Regularized Generalized Linear Models (via \code{glmnet::glmnet})
+#'   }
+#' @param mode A character string defining the model type: \code{"regression"} for continuous outcomes or \code{"classification"} for binary outcomes.
+#' @param data A tibble or data frame containing the training data, including the outcome, treatment, and covariates.
+#' @param recipe A \code{recipe} object (from the \code{recipes} package) specifying preprocessing steps (e.g., scaling, imputation, feature engineering). Must include roles for the outcome and treatment variables.
+#' @param treatment A character string specifying the name of the binary treatment variable column in \code{data}. Must be numeric (0/1) or logical (FALSE/TRUE).
+#' @param tune_params A named list of hyperparameters for the base model. Values can be fixed (e.g., \code{list(mtry = 3)}) or tuning placeholders (e.g., \code{list(mtry = tune())}). Only parameters valid for the selected \code{base_model} will be used. Defaults to an empty list \code{list()}, meaning no tuning or default engine parameters are used.
+#' @param resamples An \code{rset} resampling object (e.g., from \code{rsample::vfold_cv()}) used for hyperparameter tuning. Required if any parameters in \code{tune_params} are set to \code{tune()}.
+#' @param grid An integer indicating the number of parameter combinations to use in a grid search for tuning. Passed to \code{tune::tune_grid()}. Defaults to 20. Ignored if no tuning parameters are specified.
+#' @param policy Logical. Whether to compute an optimal treatment assignment policy based on the estimated treatment effects. Defaults to \code{FALSE}.
+#' @param policy_method A character string specifying the policy learning method. Required if \code{policy = TRUE}.
+#'   \itemize{
+#'     \item \code{"greedy"}: Finds a single optimal threshold \(\hat{\tau}^*\) on the estimated ITEs that maximizes the total average gain. Simple and interpretable.
+#'     \item \code{"tree"}: Learns a multivariate policy tree (via \code{policytree::policy_tree()}) that assigns treatment based on covariates \(X\), not just the predicted ITE. More flexible but complex.
+#'   }
+#' @param metrics A \code{yardstick::metric_set()} object containing performance metrics for model tuning. If \code{NULL}, defaults to \code{rmse()} for regression or \code{accuracy()} for classification.
+#' @param optimize Logical. Whether to perform Bayesian optimization (via \code{tune::tune_bayes()}) after an initial grid search when tuning parameters. Can be more efficient than a pure grid search for high-dimensional parameter spaces. Defaults to \code{FALSE}.
+#' @param bootstrap Logical. Whether to perform non-parametric bootstrap resampling to estimate confidence intervals for all effect measures. Highly recommended to assess estimation uncertainty. Defaults to \code{FALSE}.
+#' @param bootstrap_iters Number of bootstrap iterations/samples to generate if \code{bootstrap = TRUE}. A higher number yields more stable interval estimates but increases computation time. Defaults to 100.
+#' @param bootstrap_alpha Alpha level for constructing bootstrap confidence intervals. The resulting intervals will be at the \(100 \times (1 - \alpha)\)\% confidence level. Defaults to 0.05 (for 95\% CIs).
+#' @param stability Logical. Whether to compute comprehensive model stability measures across the bootstrap iterations. Provides diagnostics on the robustness of ITE estimates. Requires \code{bootstrap = TRUE}. Defaults to \code{FALSE}.
 #'
 #' @return
-#' An object of class `"s_learner"` containing:
-#' \item{base_model}{The parsnip model specification used for fitting}
-#' \item{model_fit}{The fitted workflow object (NULL if no modeling performed)}
-#' \item{effect_measures}{List of estimated treatment effects including:
-#'   \itemize{
-#'     \item For regression: ITE, ATE, ATT, ATC
-#'     \item For classification: Additional RD, RR, OR, NNT, PNS, PN
-#'   }
-#' }
-#' \item{effect_measures_boots}{(Only if bootstrap=TRUE) List with bootstrap CIs for all effects,
-#'   each element contains estimate, lower, and upper bounds}
-#' \item{stability_measures}{(Only if stability=TRUE) List containing model stability assessment:
-#'   \itemize{
-#'     \item \code{sd_prediction}: Unit-level standard deviation of treatment effect predictions
-#'     \item \code{cv}: Unit-level coefficient of variation of predictions
-#'     \item \code{prediction_quantiles}: Unit-level 95\% prediction intervals
-#'     \item \code{max_min_range}: Unit-level range of predictions across iterations
-#'     \item \code{mean_rank_corr}: Mean Kendall's tau correlation between bootstrap rankings
-#'     \item \code{mean_pred_effect_iter}: Mean predicted effect per bootstrap iteration
-#'     \item \code{sd_mean_effect}: Standard deviation of mean effects across iterations
-#'     \item \code{mean_pairwise_corr}: Mean correlation between predictions across iterations
-#'     \item \code{median_pairwise_corr}: Median correlation between predictions across iterations
-#'     \item \code{sd_att_iter}: Standard deviation of ATT estimates across iterations
-#'     \item \code{sd_atc_iter}: Standard deviation of ATC estimates across iterations
-#'   }
-#' }
-#' \item{modeling_results}{(Only if tuning performed) Tuning results and best parameters}
-#' \item{policy_details}{(Only if policy=TRUE) Contains:
-#'   \itemize{
-#'     \item For greedy method: best_threshold, best_gain, policy_vector, gain_curve
-#'     \item For tree method: policy_tree_model, best_gain, policy_vector
-#'   }
+#' An object of class \code{s_learner}, which is a list containing the following components:
+#' \itemize{
+#'   \item \code{base_model}: The parsnip model specification object used for fitting
+#'   \item \code{model_fit}: The final fitted \code{workflow} object containing the recipe and model. \code{NULL} if tuning was specified but failed
+#'   \item \code{effect_measures}: A list containing point estimates for all relevant treatment effect measures. Contents depend on the \code{mode}:
+#'     \itemize{
+#'       \item \strong{Regression:} ITE (vector), ATE, ATT, ATC
+#'       \item \strong{Classification:} All regression measures, plus Risk Difference (RD), Relative Risk (RR), Adjusted Relative Risk (RR*), Odds Ratio (OR), Number Needed to Treat (NNT), Probability of Necessity and Sufficiency (PNS), and Probability of Necessity (PN)
+#'     }
+#'   \item \code{effect_measures_boots}: (If \code{bootstrap = TRUE}) A list where each element corresponds to an effect measure from \code{effect_measures} and contains a tibble with the bootstrap estimate, lower CI, upper CI, and standard error
+#'   \item \code{stability_measures}: (If \code{stability = TRUE}) A list containing detailed stability assessment metrics across bootstrap iterations:
+#'     \itemize{
+#'       \item \code{unit_level}: A tibble with one row per unit and columns for unit-level stability metrics (\code{sd_prediction}, \code{cv}, \code{prediction_interval_lower}, \code{prediction_interval_upper}, \code{range})
+#'       \item \code{model_level}: A list containing model-level stability metrics (\code{mean_rank_corr}, \code{mean_pairwise_corr}, \code{median_pairwise_corr}, \code{sd_mean_effect}, \code{sd_att_iter}, \code{sd_atc_iter})
+#'     }
+#'   \item \code{modeling_results}: (If tuning was performed) A list containing the tuning results (\code{tune_results}) and the best set of hyperparameters (\code{best_params})
+#'   \item \code{policy_details}: (If \code{policy = TRUE}) A list containing the results of the policy learning step. Structure depends on \code{policy_method}:
+#'     \itemize{
+#'       \item \code{greedy}: \code{best_threshold}, \code{best_gain}, \code{policy_vector} (the assigned policy for each unit), \code{gain_curve} (a tibble of gains for all evaluated thresholds)
+#'       \item \code{tree}: \code{policy_tree_model} (the fitted tree object), \code{best_gain}, \code{policy_vector}
+#'     }
+#'   \item \code{call}: The original function call
 #' }
 #'
-#' @section Effect Measures:
-#' For classification problems, the following additional effect measures are computed:
-#' \describe{
-#'   \item{RD}{Risk Difference: P(Y=1|T=1) - P(Y=1|T=0)}
-#'   \item{RR}{Relative Risk: P(Y=1|T=1)/P(Y=1|T=0)}
-#'   \item{OR}{Odds Ratio: [P(Y=1|T=1)/P(Y=0|T=1)]/[P(Y=1|T=0)/P(Y=0|T=0)]}
-#'   \item{NNT}{Number Needed to Treat: 1/RD}
-#'   \item{PNS}{Probability of Necessity and Sufficiency}
-#'   \item{PN}{Probability of Necessity}
+#' @section Effect Measures & Formulas:
+#'
+#' \subsection{Individual Treatment Effect}{
+#' For a unit \(i\) with covariates \(X_i\), the predicted Individual Treatment Effect is:
+#' \deqn{\hat{\tau}_i = \hat{Y}_i(1) - \hat{Y}_i(0)}{tau_i = Yhat_i(T=1) - Yhat_i(T=0)}
+#' }
+#'
+#' \subsection{Average Effects}{
+#' \itemize{
+#'   \item \strong{ATE (Average Treatment Effect)}:
+#'     \deqn{\widehat{ATE} = \frac{1}{N}\sum_{i=1}^N \hat{\tau}_i}{ATE = mean(tau_i)}
+#'   \item \strong{ATT (Average Treatment Effect on the Treated)}:
+#'     \deqn{\widehat{ATT} = \frac{1}{N_T}\sum_{i: T_i=1} \hat{\tau}_i}{ATT = mean(tau_i for treated)}
+#'   \item \strong{ATC (Average Treatment Effect on the Controls)}:
+#'     \deqn{\widehat{ATC} = \frac{1}{N_C}\sum_{i: T_i=0} \hat{\tau}_i}{ATC = mean(tau_i for control)}
+#' }
+#' }
+#'
+#' \subsection{Classification-Specific Measures}{
+#' Define classification probabilities:
+#' \deqn{\hat{p}_i(1) = \hat{P}(Y_i=1 | T_i=1, X_i)}{phat_i(T=1) = P(Y_i=1 | T_i=1, X_i)}
+#' \deqn{\hat{p}_i(0) = \hat{P}(Y_i=1 | T_i=0, X_i)}{phat_i(T=0) = P(Y_i=1 | T_i=0, X_i)}
+#'
+#' \itemize{
+#'   \item \strong{RD (Risk Difference)}:
+#'     \deqn{\widehat{RD} = \frac{1}{N}\sum_{i=1}^N \left[\hat{p}_i(1) - \hat{p}_i(0)\right]}{RD = mean(phat_i(T=1) - phat_i(T=0))}
+#'   \item \strong{RR (Relative Risk)}:
+#'     \deqn{\widehat{RR} = \frac{ \frac{1}{N}\sum_i \hat{p}_i(1) }{ \frac{1}{N}\sum_i \hat{p}_i(0) }}{RR = mean(phat_i(T=1)) / mean(phat_i(T=0))}
+#'   \item \strong{OR (Odds Ratio)}:
+#'     \deqn{\widehat{OR} = \frac{ \left[\frac{1}{N}\sum_i \hat{p}_i(1)\right] / \left[1 - \frac{1}{N}\sum_i \hat{p}_i(1)\right] }{ \left[\frac{1}{N}\sum_i \hat{p}_i(0)\right] / \left[1 - \frac{1}{N}\sum_i \hat{p}_i(0)\right] }}{OR = (mean(phat_i(T=1)) / (1 - mean(phat_i(T=1)))) / (mean(phat_i(T=0)) / (1 - mean(phat_i(T=0))))}
+#'   \item \strong{NNT (Number Needed to Treat)}:
+#'     \deqn{\widehat{NNT} = \frac{1}{\widehat{RD}}}{NNT = 1 / RD}
+#' }
 #' }
 #'
 #' @section Stability Assessment:
-#' When `stability = TRUE`, the function provides comprehensive model reliability metrics
-#' that assess how consistent the treatment effect estimates are across bootstrap resamples.
-#' This helps evaluate the robustness and reliability of the causal model.
+#' When \code{stability = TRUE}, the function provides a comprehensive assessment of model reliability across bootstrap resamples.
 #'
-#' \describe{
-#'   \item{Unit-level stability}{
-#'     Measures variability of individual treatment effect predictions across bootstrap iterations.
-#'     For each unit \eqn{i}, we compute:
-#'     \itemize{
-#'       \item \strong{Prediction standard deviation}:
-#'             \eqn{\sigma_i = \sqrt{\frac{1}{B-1}\sum_{b=1}^B (\hat{\tau}_{i}^{(b)} - \bar{\tau}_i)^2}}
-#'             where \eqn{\hat{\tau}_{i}^{(b)}} is the treatment effect estimate for unit \eqn{i}
-#'             in bootstrap iteration \eqn{b}, and \eqn{B} is the number of bootstrap iterations
-#'       \item \strong{Coefficient of variation}:
-#'             \eqn{CV_i = \frac{\sigma_i}{|\bar{\tau}_i| + \epsilon}} (with \eqn{\epsilon = 10^{-10}}
-#'             to avoid division by zero), measuring relative variability
-#'       \item \strong{95\% prediction intervals}:
-#'             \eqn{[Q_{0.025}(\hat{\tau}_{i}), Q_{0.975}(\hat{\tau}_{i})]} where \eqn{Q_p} is the
-#'             p-th quantile across bootstrap iterations
-#'       \item \strong{Range}: \eqn{\max_b(\hat{\tau}_{i}^{(b)}) - \min_b(\hat{\tau}_{i}^{(b)})},
-#'             showing the total spread of predictions
-#'     }
-#'     High unit-level variability suggests the model is sensitive to data perturbations for specific units.
-#'   }
+#' \subsection{Unit-Level Stability}{
+#' Measures the variability of the ITE prediction for each individual unit across bootstrap iterations:
+#' \itemize{
+#'   \item \strong{Prediction Standard Deviation} (\eqn{\sigma_i}{sigma_i}):
+#'     \deqn{\sigma_i = \sqrt{\frac{1}{B-1}\sum_{b=1}^B (\hat{\tau}_i^{(b)} - \bar{\tau}_i)^2}}{sigma_i = sqrt(1/(B-1) * sum_b (tauhat_i_b - taubar_i)^2)}
+#'     where \(B\) is the number of bootstrap iterations, \(\hat{\tau}_i^{(b)}\) is the estimate for unit \(i\) in iteration \(b\), and \(\bar{\tau}_i = \frac{1}{B}\sum_b \hat{\tau}_i^{(b)}\)
+#'   \item \strong{Coefficient of Variation} (\eqn{CV_i}{CV_i}):
+#'     \deqn{CV_i = \frac{\sigma_i}{|\bar{\tau}_i| + \epsilon}}{CV_i = sigma_i / (abs(taubar_i) + 1e-10)}
+#'     with \(\epsilon = 10^{-10}\) to avoid division by zero. A higher CV indicates higher relative uncertainty
+#'   \item \strong{95\% Prediction Intervals}: For each unit, the 2.5th and 97.5th percentiles of its \(\hat{\tau}_i^{(b)}\) distribution across all iterations
+#'   \item \strong{Range}:
+#'     \deqn{\max_b(\hat{\tau}_i^{(b)}) - \min_b(\hat{\tau}_i^{(b)})}{max(tauhat_i_b) - min(tauhat_i_b)}
+#' }
+#' }
 #'
-#'   \item{Model-level stability}{
-#'     Assesses consistency of overall model behavior across bootstrap iterations:
-#'     \itemize{
-#'       \item \strong{Mean effect variability}:
-#'             \eqn{\sigma_{\bar{\tau}} = \sqrt{\frac{1}{B-1}\sum_{b=1}^B (\bar{\tau}^{(b)} - \bar{\tau})^2}}
-#'             where \eqn{\bar{\tau}^{(b)}} is the ATE in iteration \eqn{b}
-#'       \item \strong{Pairwise prediction correlation}:
-#'             Mean and median of \eqn{\rho_{b,b'} = \text{corr}(\hat{\tau}^{(b)}, \hat{\tau}^{(b')})}
-#'             for all pairs of bootstrap iterations, measuring overall prediction consistency
-#'       \item \strong{Effect measure consistency}:
-#'             Standard deviations of ATT and ATC across iterations:
-#'             \eqn{\sigma_{ATT} = \sqrt{\frac{1}{B-1}\sum_{b=1}^B (ATT^{(b)} - \overline{ATT})^2}}
-#'             and similarly for ATC
-#'     }
-#'     Low model-level variability indicates the model produces consistent aggregate results.
-#'   }
-#'
-#'   \item{Ranking consistency}{
-#'     Evaluates whether units maintain their relative ordering of treatment effects across
-#'     different bootstrap samples using Kendall's tau rank correlation:
-#'     \itemize{
-#'       \item \strong{Mean Kendall's tau}:
-#'             \eqn{\bar{\tau}_K = \frac{2}{B(B-1)}\sum_{b<b'} \tau_K(R_b, R_{b'})}
-#'             where \eqn{R_b} is the rank vector of treatment effects in iteration \eqn{b},
-#'             and \eqn{\tau_K} is Kendall's tau between two rankings
-#'       \item \strong{Interpretation}: Values close to 1 indicate perfect ranking preservation,
-#'             values near 0 suggest random ordering, and negative values indicate reversed rankings
-#'     }
-#'     High ranking consistency suggests the model reliably identifies which units benefit most
-#'     from treatment, regardless of data variations.
-#'   }
+#' \subsection{Model-Level Stability}{
+#' Assesses the consistency of overall model behavior and aggregate estimates:
+#' \itemize{
+#'   \item \strong{Mean Kendall's Tau} (\eqn{\bar{\tau}_K}{tauK_bar}):
+#'     The average pairwise Kendall's rank correlation between the ordering of units by their \(\hat{\tau}_i\) across all pairs of bootstrap iterations
+#'     \deqn{\bar{\tau}_K = \frac{2}{B(B-1)}\sum_{b=1}^{B-1}\sum_{b'=b+1}^B \tau_K(\hat{\tau}^{(b)}, \hat{\tau}^{(b')})}{tauK_bar = 2/(B*(B-1)) * sum_b sum_bprime KendallTau(tauhat_b, tauhat_bprime)}
+#'     Values close to 1 indicate the model reliably identifies which units benefit most from treatment
+#'   \item \strong{Mean Pairwise Correlation}: The mean and median of all pairwise Pearson correlations between the vectors of ITEs from different bootstrap iterations
+#'   \item \strong{Variability of Aggregate Estimates}: The standard deviation of the ATE, ATT, and ATC estimates across the bootstrap iterations (\(\sigma_{\text{ATE}}\), \(\sigma_{\text{ATT}}\), \(\sigma_{\text{ATC}}\)) provides a standard error for these aggregate measures
+#' }
 #' }
 #'
 #' @section Interpretation Guidelines:
+#'
+#' \subsection{Individual Treatment Effects (ITE)}{
+#' \deqn{\tau_i = \hat{Y}_i(T=1) - \hat{Y}_i(T=0)}{tau_i = Yhat_i(T=1) - Yhat_i(T=0)}
+#' For classification models using S/X-learner adjustment:
+#' \deqn{\tau_i = (1 - \hat{e}_i) \hat{\mu}_{1i} + \hat{e}_i \hat{\mu}_{0i}}{tau_i = (1 - e_hat_i) * mu1_i + e_hat_i * mu0_i}
+#'
+#' \strong{Interpretation:}
 #' \itemize{
-#'   \item \strong{Low variability} (small σ, CV < 0.1): Model is stable and reliable
-#'   \item \strong{Moderate variability} (CV 0.1-0.5): Some sensitivity to data variations
-#'   \item \strong{High variability} (CV > 0.5, wide prediction intervals): Model is unstable
-#'   \item \strong{High ranking consistency} (Kendall's tau > 0.7): Reliable prioritization of units
-#'   \item \strong{Low ranking consistency} (Kendall's tau < 0.3): Unreliable unit ordering
+#'   \item \(\hat{\tau}_i > 0\): Treatment is expected to improve the outcome for unit \(i\)
+#'   \item \(\hat{\tau}_i < 0\): Treatment is expected to harm or reduce the outcome for unit \(i\)
+#'   \item \(\hat{\tau}_i \approx 0\): Minimal expected effect
+#' }
+#' \strong{Practical tip:} Always interpret ITEs alongside their bootstrap prediction intervals and coefficient of variation (CV). A large positive effect with a very wide interval (e.g., [-10, 100]) is highly uncertain.
 #' }
 #'
-#' These metrics help identify whether treatment effect heterogeneity is robustly estimated
-#' or may be sensitive to specific data configurations, guiding model selection and
-#' interpretation of individual treatment effects.
+#' \subsection{Average Treatment Effect (ATE)}{
+#' \deqn{ATE = \frac{1}{N} \sum_{i=1}^{N} \tau_i}{ATE = mean(tau_i)}
+#'
+#' \strong{Interpretation:} The expected effect if the entire population were treated versus untreated
+#' \itemize{
+#'   \item Positive ATE: Treatment is beneficial on average
+#'   \item Negative ATE: Treatment is harmful on average
+#' }
+#' \strong{Caveat:} The ATE can mask heterogeneity. Always check if ATT and ATC diverge.
+#' }
+#'
+#' \subsection{Average Treatment Effect on Treated (ATT) / Control (ATC)}{
+#' \itemize{
+#'   \item \strong{ATT:} Mean effect for units that actually received treatment
+#'   \item \strong{ATC:} Mean effect for units that received control
+#' }
+#' \strong{Interpretation:}
+#' \itemize{
+#'   \item ATT assesses effectiveness in the treated population
+#'   \item ATC predicts effect if control population were treated
+#' }
+#' \strong{Caution:} Significant differences between ATT and ATC suggest treatment effect heterogeneity and that the average effect may not apply equally to all subgroups.
+#' }
+#'
+#' \subsection{Classification-Specific Measures}{
+#' These measures interpret treatment effects on the probability scale.
+#'
+#' \itemize{
+#'   \item \strong{Risk Difference (RD)}:
+#'     \deqn{RD = P(Y=1 \mid T=1) - P(Y=1 \mid T=0)}
+#'     \itemize{
+#'       \item \strong{Interpretation:} Absolute difference in outcome probability
+#'       \item \strong{Guideline:} RD > 0 favors treatment. An RD of 0.05 means 5 more positive outcomes per 100 treated
+#'       \item \strong{Context:} Most intuitive measure for public health impact
+#'     }
+#'
+#'   \item \strong{Relative Risk (RR) / Risk Ratio}:
+#'     \deqn{RR = \frac{P(Y=1 \mid T=1)}{P(Y=1 \mid T=0)}}
+#'     \itemize{
+#'       \item \strong{Interpretation:} Ratio of probabilities
+#'       \item \strong{Guideline:} RR > 1 favors treatment. RR = 1.25 means 25\% higher probability of positive outcome with treatment
+#'       \item \strong{Context:} Useful when baseline risk varies; often preferred in epidemiological studies
+#'     }
+#'
+#'   \item \strong{Adjusted Relative Risk (RR*)}:
+#'     \deqn{RR^* = \frac{1 - P(Y=1 \mid T=0)}{1 - P(Y=1 \mid T=1)}}
+#'     \itemize{
+#'       \item \strong{Interpretation:} Risk ratio on the failure scale
+#'       \item \strong{Guideline:} RR* > 1 favors treatment; interpreted as reduction in failure risk
+#'       \item \strong{Context:} Relevant when avoiding a negative event is the goal (e.g., disease prevention)
+#'     }
+#'
+#'   \item \strong{Odds Ratio (OR)}:
+#'     \deqn{OR = \frac{P(Y=1 \mid T=1)/P(Y=0 \mid T=1)}{P(Y=1 \mid T=0)/P(Y=0 \mid T=0)}}
+#'     \itemize{
+#'       \item \strong{Interpretation:} Ratio of odds of outcome
+#'       \item \strong{Guideline:} OR > 1 favors treatment. Note: OR exaggerates effects compared to RR when outcomes are common (>10\%)
+#'       \item \strong{Context:} Natural parameter in logistic models; commonly used in case-control studies
+#'     }
+#'
+#'   \item \strong{Number Needed to Treat (NNT)}:
+#'     \deqn{NNT = \frac{1}{RD}}
+#'     \itemize{
+#'       \item \strong{Interpretation:} Number of patients needed to treat for one additional positive outcome
+#'       \item \strong{Guideline:} Lower NNT indicates stronger effect. NNT = 20 means treat 20 patients for one additional benefit
+#'       \item \strong{Caveat:} Becomes unstable (approaches ±Infinity) as RD approaches 0. Always check RD first
+#'     }
+#'
+#'   \item \strong{Probability of Necessity (PN)}:
+#'     \deqn{PN = P(Y(T=0)=0 \mid Y=1, T=1)}
+#'     \itemize{
+#'       \item \strong{Interpretation:} Probability that the outcome would not have occurred without treatment, given it occurred with treatment
+#'       \item \strong{Context:} Useful for attributing outcomes in legal or clinical causality assessments
+#'     }
+#'
+#'   \item \strong{Probability of Necessity and Sufficiency (PNS)}:
+#'    \deqn{PNS = P(Y(T=1)=1, Y(T=0)=0)}
+#'     \itemize{
+#'    \item \strong{Interpretation}: Probability that treatment is both necessary and sufficient for the outcome.
+#'    \item \strong{Context}: Useful for strong causal attribution; requires assumptions like monotonicity and no unmeasured confounding.
+#'    }
+#'
+#' **5. Model Stability Metrics**
+#' - **Unit-level variability (CV_i):**
+#'   - \(CV_i < 0.1\): Stable, reliable estimate for unit \(i\).
+#'   - \(0.1 \leq CV_i \leq 0.5\): Moderate sensitivity; interpret with caution.
+#'   - \(CV_i > 0.5\): Highly unstable; do not rely on this specific estimate.
+#'
+#' - **Ranking consistency (Mean Kendall's Tau, \(\bar{\tau}_K\)):**
+#'   - \(\bar{\tau}_K > 0.7\): Reliable prioritization of units (e.g., for targeting treatment).
+#'   - \(0.3 \leq \bar{\tau}_K \leq 0.7\): Moderate reliability.
+#'   - \(\bar{\tau}_K < 0.3\): Unreliable ranking; model cannot consistently identify who benefits most.
+#'
+#' @section Model Stability Metrics:
+#'
+#' \subsection{Unit-Level Stability}{
+#' Measures the reliability of individual treatment effect estimates:
+#' \itemize{
+#'   \item \strong{Coefficient of Variation (CV_i)}:
+#'     \itemize{
+#'       \item \(CV_i < 0.1\): Stable, reliable estimate for unit \(i\)
+#'       \item \(0.1 \leq CV_i \leq 0.5\): Moderate sensitivity; interpret with caution
+#'       \item \(CV_i > 0.5\): Highly unstable; do not rely on this specific estimate
+#'     }
+#' }
+#' }
+#'
+#' \subsection{Ranking Consistency}{
+#' Measures how consistently units are ordered by their treatment effects across bootstrap iterations:
+#' \itemize{
+#'   \item \strong{Mean Kendall's Tau (\(\bar{\tau}_K\))}:
+#'     \itemize{
+#'       \item \(\bar{\tau}_K > 0.7\): Reliable prioritization of units (e.g., for targeting treatment)
+#'       \item \(0.3 \leq \bar{\tau}_K \leq 0.7\): Moderate reliability
+#'       \item \(\bar{\tau}_K < 0.3\): Unreliable ranking; model cannot consistently identify who benefits most
+#'     }
+#' }
+#' }
+#'
+#' \subsection{Model-Level Stability}{
+#' Assesses the consistency of aggregate effect estimates:
+#' \itemize{
+#'   \item \strong{Variability of Aggregate Estimates (\(\sigma_{\text{ATE}}\), \(\sigma_{\text{ATT}}\), \(\sigma_{\text{ATC}}\))}:
+#'     Reports the standard error of the ATE, ATT, and ATC directly from the bootstrap. Use this to assess the precision of your average effect estimates
+#'   \item \strong{Pairwise Prediction Correlation}: Mean and median correlation between ITE vectors across different bootstrap iterations, measuring overall prediction consistency
+#' }
+#' }
+#'
+#' @section Practical Recommendations for Reporting:
+#' \enumerate{
+#'   \item \strong{For clinical/policy impact:} Lead with Risk Difference (RD) and Number Needed to Treat (NNT) as they are most actionable for decision-making
+#'   \item \strong{For academic contexts:} Report Relative Risk (RR) and Odds Ratio (OR) alongside RD, noting that OR ≠ RR especially for common outcomes
+#'   \item \strong{Always provide measures of uncertainty:} Bootstrap confidence intervals for all reported effects to convey estimation precision
+#'   \item \strong{Contextualize effects:} A small RD (e.g., 0.01) may be very important for common, serious outcomes with large population impact
+#'   \item \strong{Check consistency:} Ensure direction of effects align across measures (e.g., RD, RR, OR should all favor the same conclusion)
+#'   \item \strong{Prioritize stable estimates:} Use the stability metrics (CV_i, \(\bar{\tau}_K\)) to focus interpretation on the most reliable findings
+#'   \item \strong{Report both ATE and subgroup effects:} Include ATT and ATC to assess treatment effect heterogeneity
+#'   \item \strong{Consider clinical significance:} Statistical significance should be accompanied by assessment of practical importance
+#' }
 #'
 #' @section Policy Learning:
-#' When `policy = TRUE`, the function computes optimal treatment assignment rules:
-#' \describe{
-#'   \item{Greedy Threshold}{Finds the treatment effect threshold that maximizes total gain}
-#'   \item{Policy Tree}{Learns a decision tree for treatment assignment based on covariates}
+#' When \code{policy = TRUE}, the function computes optimal treatment assignment rules to maximize overall benefit.
+#'
+#' \subsection{Greedy Threshold (\code{policy_method = "greedy"})}{
+#' Finds the optimal threshold \(\hat{\tau}^*\) that maximizes the total gain when treating units with \(\hat{\tau}_i > \hat{\tau}^*\).
+#'
+#' The gain function for a threshold \(c\) is defined as:
+#' \deqn{G(c) = \sum_i \hat{\tau}_i \cdot I(\hat{\tau}_i > c) - \lambda \cdot \sum_i I(\hat{\tau}_i > c)}
+#' where:
+#' \itemize{
+#'   \item \(\hat{\tau}_i\) is the estimated treatment effect for unit \(i\)
+#'   \item \(I(\cdot)\) is the indicator function
+#'   \item \(\lambda\) represents the cost of treatment (default: 0)
 #' }
 #'
-#' @section Model Details:
-#' For each supported model type:
-#' \describe{
-#'   \item{Random Forest}{Uses `ranger` engine. Tunable parameters: mtry, trees, min_n}
-#'   \item{MARS}{Uses `earth` engine. Tunable parameters: num_terms, prod_degree, prune_method}
-#'   \item{XGBoost}{Uses `xgboost` engine. Tunable parameters: tree_depth, trees, learn_rate,
-#'     mtry, min_n, sample_size, loss_reduction}
-#'   \item{GLMNet}{Uses `glmnet` engine. Tunable parameters: penalty, mixture}
+#' \strong{Advantages:}
+#' \itemize{
+#'   \item Simple and interpretable
+#'   \item Computationally efficient
+#'   \item Provides a clear cutoff for treatment assignment
 #' }
 #'
-#' @examples
+#' \strong{Limitations:}
+#' \itemize{
+#'   \item Univariate (based only on predicted ITEs)
+#'   \item May not capture complex interactions between covariates
+#' }
+#' }
+#'
+#' \subsection{Policy Tree (\code{policy_method = "tree"})}{
+#' Learns a multivariate decision tree (via \code{policytree::policy_tree()}) that assigns treatment based directly on covariates \(X\), not just predicted ITEs.
+#'
+#' \strong{Key features:}
+#' \itemize{
+#'   \item \strong{Multivariate:} Uses the full covariate matrix \(X\) for decision making
+#'   \item \strong{Interpretable:} Produces rules like "Treat if age > 50 AND biomarker < 200"
+#'   \item \strong{Non-parametric:} Can capture complex interaction effects
+#'   \item \strong{Optimal:} Finds the treatment assignment policy that maximizes the sum of predicted treatment effects
+#' }
+#'
+#' \strong{Advantages:}
+#' \itemize{
+#'   \item Discovers complex, interpretable decision rules
+#'   \item More robust to model misspecification of ITEs
+#'   \item Can identify subgroups that benefit most from treatment
+#' }
+#'
+#' \strong{Limitations:}
+#' \itemize{
+#'   \item More computationally intensive
+#'   \item Requires larger sample sizes for stable tree estimation
+#'   \tree interpretation becomes more complex with deeper trees
+#' }
+#'
+#' \strong{Example rules:}
+#' \itemize{
+#'   \item "Treat patients with BMI > 30 and HbA1c > 7.0"
+#'   \item "Treat individuals aged 40-65 with high cholesterol"
+#'   \item "No treatment for patients under 18 or over 80"
+#' }
+#' }
+#'
 #' \dontrun{
-#' # Example 1: Basic usage with random forest
+#' # Example 1: Basic usage with random forest for a classification outcome
+#' library(recipes)
+#' library(tidymodels)
+#'
+#' # Create a simple recipe
+#' rec <- recipe(Y ~ T + X1 + X2, data = my_data) %>%
+#'   step_normalize(all_numeric_predictors())
+#'
 #' s_fit <- s_learner(
 #'   base_model = "random_forest",
-#'   data = data,
+#'   mode = "classification",
+#'   data = my_data,
 #'   recipe = rec,
-#'   treatment = "treatment",
-#'   mode = "classification"
+#'   treatment = "T"
 #' )
 #'
-#' # Example 2: With stability assessment and bootstrap CIs
+#' # Print the Average Treatment Effect
+#' print(s_fit$effect_measures$ATE)
+#'
+#' # Example 2: With bootstrap CIs and stability assessment
 #' s_fit_stable <- s_learner(
 #'   base_model = "random_forest",
-#'   data = data,
-#'   recipe = rec,
-#'   treatment = "treatment",
 #'   mode = "regression",
+#'   data = my_data,
+#'   recipe = rec,
+#'   treatment = "T",
 #'   bootstrap = TRUE,
-#'   stability = TRUE,
-#'   bootstrap_iters = 200
+#'   bootstrap_iters = 200, # More iterations for smoother CIs
+#'   stability = TRUE # Requires bootstrap=TRUE
 #' )
 #'
-#' # Example 3: With policy tree and comprehensive assessment
+#' # Inspect bootstrap CI for the ATE
+#' print(s_fit_stable$effect_measures_boots$ATE)
+#'
+#' # Inspect unit-level stability for the first 6 units
+#' head(s_fit_stable$stability_measures$unit_level)
+#'
+#' # Example 3: Full pipeline with tuning and policy learning
+#' # Define tuning parameters and resampling strategy
+#' tune_spec <- list(mtry = tune(), min_n = tune())
+#' folds <- vfold_cv(my_data, v = 5)
+#'
 #' s_fit_full <- s_learner(
 #'   base_model = "xgb",
-#'   data = data,
+#'   mode = "classification",
+#'   data = my_data,
 #'   recipe = rec,
-#'   treatment = "treatment",
+#'   treatment = "T",
+#'   tune_params = tune_spec,
+#'   resamples = folds,
+#'   grid = 30,
 #'   policy = TRUE,
-#'   policy_method = "tree",
+#'   policy_method = "tree", # Use a policy tree
 #'   bootstrap = TRUE,
-#'   stability = TRUE,
-#'   bootstrap_iters = 500
-#' )
-#'
-#' # Access stability measures
-#' stability_info <- s_fit_full$stability_measures
-#' print(stability_info$sd_prediction)  # Unit-level variability
-#' print(stability_info$sd_att_iter)    # ATT consistency across iterations
+#'   stability = TRUE
+#'   )
 #' }
-#' @seealso
-#' \code{\link[=predict.causal_learner]{predict.causal_learner()}} for making predictions on new data
+#' @details Methods and Functions:
 #'
+#' \describe{
+#'   \item{\code{predict}}{For making predictions on new data.}
+#'   \item{\code{summary}}{For model summary.}
+#'   \item{\code{print}}{For printing the model summary.}
+#'   \item{\code{explain_model}}{For model-agnostic explanation.}
+#'   \item{\code{explore_causal}}{For plots and DAG generation.}
+#'   \item{\code{adjust_confounders}}{For confounders adjustment.}
+#'   \item{\code{autoplot}}{For model output visualization.}
+#' }
 #' @export
 s_learner <- function(
     base_model = NULL,
@@ -645,7 +847,6 @@ s_learner <- function(
       })
     }
     close(pb)
-
     # Compute CIs from the bootstrap distributions
     effect_measures_boots <- list(
       ATE = c(estimate = mean(ate_boot_list, na.rm = TRUE),
