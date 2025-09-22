@@ -147,14 +147,14 @@ predict.causal_learner <- function(object,new_data,policy = FALSE,policy_method 
     ## S Learner
     if (inherits(object,"s_learner")) {
       # Predict prob on the counterfactual data
-      y1_prob <- predict(model_fit,new_data = data_1)$.pred
-      y0_prob <- predict(model_fit,new_data = data_0)$.pred
+      y1_prob <- predict(model_fit,new_data = data)$.pred
+      y0_prob <- predict(model_fit,new_data = data)$.pred
 
       ### T Learner
     }else if (inherits(object,"t_learner")) {
       # Predict prob on the counterfactual data using bolt models
-      y1_prob <- predict(model_fit_1,new_data = data_1)$.pred
-      y0_prob <- predict(model_fit_0,new_data = data_0)$.pred
+      y1_prob <- predict(model_fit_1,new_data = data)$.pred
+      y0_prob <- predict(model_fit_0,new_data = data)$.pred
 
       ### X Learner
     }else if (inherits(object,"x_learner")) {
