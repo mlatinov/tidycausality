@@ -1,4 +1,3 @@
-
 #### S-Learner (Single-Learner) for Heterogeneous Treatment Effect Estimation ####
 
 # Package imports
@@ -437,18 +436,17 @@ s_learner <- function(
     bootstrap = FALSE,
     stability = FALSE,
     bootstrap_iters = 100,
-    bootstrap_alpha = 0.05
-) {
-
+    bootstrap_alpha = 0.05) {
   # Supported models and parameters
   valid_model_names <- c("random_forest", "mars", "xgb", "glmnet")
   valid_params <- list(
     random_forest = c("mtry", "trees", "min_n"),
     mars = c("num_terms", "prod_degree", "prune_method"),
-    xgb = c("tree_depth", "trees", "learn_rate", "mtry", "min_n",
-            "sample_size", "loss_reduction", "stop_iter"),
+    xgb = c(
+      "tree_depth", "trees", "learn_rate", "mtry", "min_n",
+      "sample_size", "loss_reduction", "stop_iter"
+    ),
     glmnet = c("penalty", "mixture")
-
   )
   # Validate model inputs and return model name parameters to use and invalid parameters
   validate <- .validate_model_input(
@@ -458,14 +456,14 @@ s_learner <- function(
     data,
     valid_model_names,
     valid_params
-    )
+  )
 
   # Create model Workflow
   workflow_base <- .create_base_workflow(
     model_name = validate$model_name,
     recipe = recipe,
     mode = mode
-    )
+  )
 
   # Apply specified parameters and tune the model if needed
   workflow_final <- .apply_tune(
@@ -476,13 +474,13 @@ s_learner <- function(
     grid = grid,
     resamples = resamples,
     optimize = optimize
-    )
+  )
 
   # Final model fitting
   model_fit <- fit(workflow_final$workflow, data = data)
 
   # Create a list with counterfactual datasets
-  counterfactual <- .create_counterfactual(data = data,treatment = treatment)
+  counterfactual <- .create_counterfactual(data = data, treatment = treatment)
 
   # Calculate effect measures from model fit and counterfactual
   effect_measures <- .calculate_effects(
@@ -490,13 +488,13 @@ s_learner <- function(
     model_fit = model_fit,
     mode = mode,
     treatment = treatment
-    )
+  )
 
   # Bootstrap confidence intervals
   if (bootstrap) {
     message("Running ", bootstrap_iters, " bootstrap iterations...")
 
-    # Extract the base specification with applied  parameters in the bootstrap loop
+    # Extract the base specification with applied parameters in the bootstrap loop
     model_spec <- extract_spec_parsnip(workflow_final$workflow)
 
     # Progress Bar
@@ -514,45 +512,45 @@ s_learner <- function(
     for (i in seq_len(bootstrap_iters)) {
       utils::setTxtProgressBar(pb, i)
 
-        # Sample with replacement
-        boot_idx <- sample(nrow(data), replace = TRUE)
-        boot_data <- data[boot_idx, ]
+      # Sample with replacement
+      boot_idx <- sample(nrow(data), replace = TRUE)
+      boot_data <- data[boot_idx, ]
 
-        # Create bootstrap counterfactual
-        boot_counterfactual <- .create_counterfactual(data = boot_data,treatment = treatment)
+      # Create bootstrap counterfactual
+      boot_counterfactual <- .create_counterfactual(data = boot_data, treatment = treatment)
 
-        # Replicate the original input recipe on the bootstrap sample
-        boot_recipe <- .replicate_recipe(data = boot_data, recipe = recipe)
+      # Replicate the original input recipe on the bootstrap sample
+      boot_recipe <- .replicate_recipe(data = boot_data, recipe = recipe)
 
-        # Create a Bootstrap workflow
-        boot_workflow <- workflow() %>%
-          add_model(workflow_base$base_spec) %>%
-          add_recipe(boot_recipe)
+      # Create a Bootstrap workflow
+      boot_workflow <- workflow() %>%
+        add_model(model_spec) %>%
+        add_recipe(boot_recipe)
 
-        # Fit model on bootstrap sample
-        boot_fit <- fit(boot_workflow, data = boot_data)
+      # Fit model on bootstrap sample
+      boot_fit <- fit(boot_workflow, data = boot_data)
 
-        # Calculate effect measures from boot fit and boot_counterfactual
-        effect_list[[i]] <- .calculate_effects(
+      # Calculate effect measures from boot fit and boot_counterfactual
+      effect_list[[i]] <- .calculate_effects(
+        counterfactual = boot_counterfactual,
+        model_fit = boot_fit,
+        mode = mode,
+        treatment = treatment
+      )
+      # Calculate stability measures from boot_fit and boot_counterfactual
+      if (stability) {
+        stability_list[[i]] <- .calculate_stability(
           counterfactual = boot_counterfactual,
           model_fit = boot_fit,
           mode = mode,
           treatment = treatment
-          )
-        # Calculate stability measures from boot_fit and boot_counterfactual
-        if (stability) {
-          stability_list[[i]] <- .calculate_stability(
-            counterfactual = boot_counterfactual,
-            model_fit = boot_fit,
-            mode = mode,
-            treatment = treatment
-          )
-        }
+        )
+      }
     }
     close(pb)
 
     # Aggregate measures and compute CI
-    effect_measures_boots <- .aggregate_measures(effect_list,alpha = bootstrap_alpha,mode)
+    effect_measures_boots <- .aggregate_measures(effect_list, alpha = bootstrap_alpha, mode)
 
     # Aggregate measures and compute CI for stablity measures
     if (stability) {
@@ -561,7 +559,7 @@ s_learner <- function(
         alpha = bootstrap_alpha,
         mode,
         bootstrap_iters
-        )
+      )
     }
   }
   # Policy Implementation
@@ -578,33 +576,11 @@ s_learner <- function(
       data = data,
       model_fit = model_fit,
       effect_measures = effect_measures,
-      effect_measures_boots = if(bootstrap) effect_measures_boots else NULL,
-      stability_measures = if(stability)  stability_measures else NULL,
-      modeling_results  = if("tune()" %in% tune_params) workflow_final$modeling_results else NULL,
-      policy_details = if(policy) policy_details else NULL
+      effect_measures_boots = if (bootstrap) effect_measures_boots else NULL,
+      stability_measures = if (stability) stability_measures else NULL,
+      modeling_results = if ("tune()" %in% tune_params) workflow_final$modeling_results else NULL,
+      policy_details = if (policy) policy_details else NULL
     ),
     class = c("s_learner", "causal_learner")
   )
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
