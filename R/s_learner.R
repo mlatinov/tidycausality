@@ -482,19 +482,26 @@ s_learner <- function(
   # Create a list with counterfactual datasets
   counterfactual <- .create_counterfactual(data = data, treatment = treatment)
 
-  # Calculate effect measures from model fit and counterfactual
-  effect_measures <- .calculate_effects(
+  # Predict on the counterfactuals and return Y1 and Y0
+  predict_y1_y0 <- .predict_meta(
     counterfactual = counterfactual,
     model_fit = model_fit,
     mode = mode,
-    treatment = treatment
+    type = "s_learner")
+
+  # Calculate effect measures from model fit and counterfactual
+  effect_measures <- .calculate_effects(
+    predicted_y1_y0 = predict_y1_y0,
+    treatment = treatment,
+    mode = mode,
+    original_data = data
   )
 
   # Bootstrap confidence intervals
   if (bootstrap) {
     message("Running ", bootstrap_iters, " bootstrap iterations...")
 
-    # Extract the base specification with applied parameters in the bootstrap loop
+    # Extract the base specification with applied parameters
     model_spec <- extract_spec_parsnip(workflow_final$workflow)
 
     # Progress Bar
@@ -530,20 +537,28 @@ s_learner <- function(
       # Fit model on bootstrap sample
       boot_fit <- fit(boot_workflow, data = boot_data)
 
-      # Calculate effect measures from boot fit and boot_counterfactual
-      effect_list[[i]] <- .calculate_effects(
+      # Predict on the boostrap sample
+      boot_predict_y1_y0 <- .predict_meta(
         counterfactual = boot_counterfactual,
         model_fit = boot_fit,
+        mode = mode,
+        type = "s_learner"
+        )
+      # Calculate effect measures from boot fit and boot_counterfactual
+      effect_list[[i]] <- .calculate_effects(
+        predicted_y1_y0 = boot_predict_y1_y0,
+        original_data = boot_data,
         mode = mode,
         treatment = treatment
       )
       # Calculate stability measures from boot_fit and boot_counterfactual
       if (stability) {
         stability_list[[i]] <- .calculate_stability(
-          counterfactual = boot_counterfactual,
+          counterfactual = counterfactual,
           model_fit = boot_fit,
           mode = mode,
-          treatment = treatment
+          treatment = treatment,
+          type = "s_learner"
         )
       }
     }
