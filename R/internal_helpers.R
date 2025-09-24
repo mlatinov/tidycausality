@@ -233,8 +233,7 @@
 }
 
 # Function to accuratly predict according for the metaleraner
-.predict_meta <- function(counterfactual,model_fit,mode,type){
-
+.predict_meta <- function(counterfactual, model_fit, mode, type) {
   # Extract from counterfactuals control and treated datasets
   control_data <- counterfactual$control_data
   treated_data <- counterfactual$treated_data
@@ -242,36 +241,41 @@
 
   # Predict for the S learner
   if (type == "s_learner") {
-
     # Outcome for classification problems
     if (mode == "classification") {
       # Predict prob on the counterfactual data
       y1 <- predict(model_fit, new_data = treated_data, type = "prob")$.pred_1
       y0 <- predict(model_fit, new_data = control_data, type = "prob")$.pred_1
-    }else{
+    } else {
       # Predict on the counterfactual data
       y1 <- predict(model_fit, new_data = treated_data)$.pred
       y0 <- predict(model_fit, new_data = control_data)$.pred
     }
     # Predict for the S learner
-    }else if (type == "t_learner") {
-
-      # Outcome for classification problems
-      if (mode == "classification") {
-        # Predict prob on the counterfactual data
-        y1 <- predict(model_fit$model_fit_treated, new_data = original_data, type = "prob")$.pred_1
-        y0 <- predict(model_fit$model_fit_control, new_data = original_data, type = "prob")$.pred_1
-      }else{
-        # Predict on the counterfactual data
-        y1 <- predict(model_fit$model_fit_treated, new_data = original_data)$.pred
-        y0 <- predict(model_fit$model_fit_control, new_data = original_data)$.pred
-      }
-      # Predict for the X learner
-    }else{
-      stop("Not Implemented yet")
-
-
+  } else if (type == "t_learner") {
+    # Outcome for classification problems
+    if (mode == "classification") {
+      # Predict prob on the counterfactual data
+      y1 <- predict(model_fit$model_fit_treated, new_data = original_data, type = "prob")$.pred_1
+      y0 <- predict(model_fit$model_fit_control, new_data = original_data, type = "prob")$.pred_1
+    } else {
+      # Predict on the counterfactual data
+      y1 <- predict(model_fit$model_fit_treated, new_data = original_data)$.pred
+      y0 <- predict(model_fit$model_fit_control, new_data = original_data)$.pred
     }
+    # Predict for the R learner
+  } else if (type == "r_learner") {
+    if (mode == "classification") {
+      pred <- predict(model_fit, new_data = original_data, type = "prob")$.pred_1
+    } else {
+      pred <- predict(model_fit, new_data = original_data)
+    }
+    # Return first stage predictions
+    return(pred)
+    # Not implemented yet
+  } else {
+    stop("Not Implemented yet")
+  }
   # Return Y1 and Y0 for later effect measures calculation
   return(list(
     y1 = y1,
@@ -279,8 +283,7 @@
   ))
 }
 # Function to Calculate all effect measures for S and T learners
-.calculate_effects <- function(predicted_y1_y0,treatment,mode,original_data) {
-
+.calculate_effects <- function(predicted_y1_y0, treatment, mode, original_data) {
   # Extract the Y1 and Y0
   y1 <- predicted_y1_y0$y1
   y0 <- predicted_y1_y0$y0
@@ -358,14 +361,14 @@
   return(new_recipe)
 }
 
-.calculate_stability <- function(counterfactual, model_fit, mode, treatment,type) {
+.calculate_stability <- function(counterfactual, model_fit, mode, treatment, type, outcome_name) {
   # Extract from counterfactuals control and treated datasets
   control_data <- counterfactual$control_data
   treated_data <- counterfactual$treated_data
   original_data <- counterfactual$original_data
 
   # Predict Y1 and Y0 for S Learner
-  if (type  == "s_learner"){
+  if (type == "s_learner") {
     if (mode == "classification") {
       y1 <- predict(model_fit, new_data = treated_data, type = "prob")$.pred_1
       y0 <- predict(model_fit, new_data = control_data, type = "prob")$.pred_1
@@ -373,7 +376,7 @@
       y1 <- predict(model_fit, new_data = treated_data)$.pred
       y0 <- predict(model_fit, new_data = control_data)$.pred
     }
-  }else if (type == "t_learner") {
+  } else if (type == "t_learner") {
     if (mode == "classification") {
       y1 <- predict(model_fit$model_fit_treated, new_data = treated_data, type = "prob")$.pred_1
       y0 <- predict(model_fit$model_fit_control, new_data = control_data, type = "prob")$.pred_1
@@ -381,6 +384,13 @@
       y1 <- predict(model_fit$model_fit_treated, new_data = treated_data)$.pred
       y0 <- predict(model_fit$model_fit_control, new_data = control_data)$.pred
     }
+  } else if (type == "r_learner") {
+    m_hat <- .predict_meta(counterfactual = counterfactual, model_fit = model_fit, mode = mode, type = "r_learner")
+    e_hat <- .propensity(treatment = treatment, data = original_data, outcome_name = outcome_name)
+    data_resid <- .residualization(data = original_data, m_hat = m_hat, e_hat = e_hat, type = "r_learner", outcome_name = outcome_name, treatment = treatment)
+    second_stage <- .second_stage(data = data_resid, m_hat = m_hat, type = "r_learner")
+    y1 <- second_stage$y1
+    y0 <- second_stage$y0
   }
 
   # Calculate measures
@@ -626,4 +636,78 @@
     policy_vector = policy_vector,
     gain_curve = gain_plot
   ))
+}
+
+# Function to create a propensity model based on log regression and estimate e_hat
+.propensity <- function(treatment, data, outcome_name) {
+  # Propensity recipe without the outcome and treatment as a target
+  prop_recipe <- recipe(as.formula(paste(treatment, "~ .")), data = data) %>% step_rm(all_of(outcome))
+
+  # Propensity model using log regression
+  prop_model <- logistic_reg() %>%
+    set_engine("glm") %>%
+    set_mode("classification")
+
+  # Propensity Workflow
+  prop_workflow <- workflow() %>%
+    add_model(prop_model) %>%
+    add_recipe(prop_recipe)
+
+  # Propensity model fitted on the original data
+  prop_fit <- fit(prop_workflow, data = data)
+
+  # Compute e_hat as the prob of someone being on the control or treated group
+  e_hat <- predict(prop_fit, new_data = data, type = "prob") %>% pull(.pred_1)
+
+  # Return e_hat for later adjustment of tau
+  return(e_hat)
+}
+
+# Function for Residualization and pseudo-residualization
+.residualization <- function(data, m_hat, e_hat, type, outcome_name, treatment) {
+  # Residualization for the R learner Compute Y tilda and A tilda
+  if (type == "r_learner") {
+    data_resid <- data %>%
+      mutate(
+        Y_tilda = {
+          outcome_name
+        } - m_hat, # residualized outcome
+        A_tilda = treatment - e_hat # residualized treatment
+      )
+
+    # Return data_resid
+    return(data_resid)
+  }
+}
+
+# Function to make a second stage regression models for predictions
+.second_stage <- function(data, type, m_hat) {
+  # Build Second Stage prediction models using Random Forest for R learner
+  if (type == "r_learner") {
+    # Recipe
+    recipe <- recipe(Y_tilde ~ A_tilde + ., data = data) %>%
+      # Add interaction terms
+      step_interact(terms = ~ A_tilde:all_predictors())
+
+    # RF Specification
+    rf_spec <- rand_forest(trees = 500) %>%
+      set_mode("regression") %>%
+      set_engine("ranger")
+
+    # RF Workflow
+    rf_wf <- workflow() %>%
+      add_model(rf_spec) %>%
+      add_recipe(recipe)
+
+    # Predict residual outcome
+    tau <- predict(rf_wf, new_data = data) %>% pull(.pred)
+    y1 <- m_hat + tau
+    y0 <- m_hat
+
+    # Return the residuals outcomes for effect measure calculations
+    return(list(
+      y1 = y1,
+      y0 = y0
+    ))
+  }
 }
