@@ -232,19 +232,61 @@
   ))
 }
 
-# Function to Calculate all effect measures for S and T learners
-.calculate_effects <- function(counterfactual, model_fit, mode, treatment) {
+# Function to accuratly predict according for the metaleraner
+.predict_meta <- function(counterfactual,model_fit,mode,type){
+
   # Extract from counterfactuals control and treated datasets
   control_data <- counterfactual$control_data
   treated_data <- counterfactual$treated_data
   original_data <- counterfactual$original_data
 
-  # Outcome for classification problems
-  if (mode == "classification") {
-    # Predict prob on the counterfactual data
-    y1 <- predict(model_fit, new_data = treated_data, type = "prob")$.pred_1
-    y0 <- predict(model_fit, new_data = control_data, type = "prob")$.pred_1
+  # Predict for the S learner
+  if (type == "s_learner") {
 
+    # Outcome for classification problems
+    if (mode == "classification") {
+      # Predict prob on the counterfactual data
+      y1 <- predict(model_fit, new_data = treated_data, type = "prob")$.pred_1
+      y0 <- predict(model_fit, new_data = control_data, type = "prob")$.pred_1
+    }else{
+      # Predict on the counterfactual data
+      y1 <- predict(model_fit, new_data = treated_data)$.pred
+      y0 <- predict(model_fit, new_data = control_data)$.pred
+    }
+    # Predict for the S learner
+    }else if (type == "t_learner") {
+
+      # Outcome for classification problems
+      if (mode == "classification") {
+        # Predict prob on the counterfactual data
+        y1 <- predict(model_fit$model_fit_treated, new_data = original_data, type = "prob")$.pred_1
+        y0 <- predict(model_fit$model_fit_control, new_data = original_data, type = "prob")$.pred_1
+      }else{
+        # Predict on the counterfactual data
+        y1 <- predict(model_fit$model_fit_treated, new_data = original_data)$.pred
+        y0 <- predict(model_fit$model_fit_control, new_data = original_data)$.pred
+      }
+      # Predict for the X learner
+    }else{
+      stop("Not Implemented yet")
+
+
+    }
+  # Return Y1 and Y0 for later effect measures calculation
+  return(list(
+    y1 = y1,
+    y0 = y0
+  ))
+}
+# Function to Calculate all effect measures for S and T learners
+.calculate_effects <- function(predicted_y1_y0,treatment,mode,original_data) {
+
+  # Extract the Y1 and Y0
+  y1 <- predicted_y1_y0$y1
+  y0 <- predicted_y1_y0$y0
+
+  # Classification effect meassures
+  if (mode == "classification") {
     # Calculate effects
     rd <- mean(y1 - y0) # RD (Risk Diffrence)
     rr <- mean(y1) / mean(y0) # RR (Relative Risk)
@@ -277,14 +319,10 @@
         PN = pn # Probability of Necessity
       )
     )
-    # Outcomes for Regression problems
+    # Regression effect meassures
   } else {
-    # Predict on the counterfactual data
-    y1 <- predict(model_fit, new_data = treated_data)$.pred
-    y0 <- predict(model_fit, new_data = control_data)$.pred
     # Compute tau
     tau <- y1 - y0
-
     # Calculate effects
     ate <- mean(tau) # ATE (Average Treatment Effect)
     att <- mean(tau[original_data[[treatment]] == 1]) # ATT (Average Treatment effect on Treated)
@@ -320,18 +358,29 @@
   return(new_recipe)
 }
 
-.calculate_stability <- function(counterfactual, model_fit, mode, treatment) {
+.calculate_stability <- function(counterfactual, model_fit, mode, treatment,type) {
   # Extract from counterfactuals control and treated datasets
   control_data <- counterfactual$control_data
   treated_data <- counterfactual$treated_data
   original_data <- counterfactual$original_data
 
-  if (mode == "classification") {
-    y1 <- predict(model_fit, new_data = treated_data, type = "prob")$.pred_1
-    y0 <- predict(model_fit, new_data = control_data, type = "prob")$.pred_1
-  } else {
-    y1 <- predict(model_fit, new_data = treated_data)$.pred
-    y0 <- predict(model_fit, new_data = control_data)$.pred
+  # Predict Y1 and Y0 for S Learner
+  if (type  == "s_learner"){
+    if (mode == "classification") {
+      y1 <- predict(model_fit, new_data = treated_data, type = "prob")$.pred_1
+      y0 <- predict(model_fit, new_data = control_data, type = "prob")$.pred_1
+    } else {
+      y1 <- predict(model_fit, new_data = treated_data)$.pred
+      y0 <- predict(model_fit, new_data = control_data)$.pred
+    }
+  }else if (type == "t_learner") {
+    if (mode == "classification") {
+      y1 <- predict(model_fit$model_fit_treated, new_data = treated_data, type = "prob")$.pred_1
+      y0 <- predict(model_fit$model_fit_control, new_data = control_data, type = "prob")$.pred_1
+    } else {
+      y1 <- predict(model_fit$model_fit_treated, new_data = treated_data)$.pred
+      y0 <- predict(model_fit$model_fit_control, new_data = control_data)$.pred
+    }
   }
 
   # Calculate measures
