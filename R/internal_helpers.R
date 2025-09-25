@@ -272,8 +272,29 @@
     }
     # Return first stage predictions
     return(pred)
-    # Not implemented yet
-  } else {
+    #  Predict for the DR learner
+  } else if (type == "dr_learner") {
+    # Outcome for classification problems
+    if (mode == "classification") {
+      # Predict prob on the counterfactual data
+      y1 <- predict(model_fit, new_data = treated_data, type = "prob")$.pred_1
+      y0 <- predict(model_fit, new_data = control_data, type = "prob")$.pred_1
+      # Predict prob on the original data
+      m_hat <- predict(model_fit, new_data = original_data, type = "prob")$.pred_1
+    } else {
+      # Predict  on the counterfactual data
+      y1 <- predict(model_fit, new_data = treated_data)$.pred
+      y0 <- predict(model_fit, new_data = control_data)$.pred
+      # Predict prob on the original data
+      m_hat <- predict(model_fit, new_data = original_data)$.pred
+    }
+    # Return Y1 Y0 and m_hat for later calculation of DR scores
+    return(list(
+      y1 = y1,
+      y0 = y0,
+      m_hat = m_hat
+    ))
+  }else{
     stop("Not Implemented yet")
   }
   # Return Y1 and Y0 for later effect measures calculation
@@ -376,6 +397,7 @@
       y1 <- predict(model_fit, new_data = treated_data)$.pred
       y0 <- predict(model_fit, new_data = control_data)$.pred
     }
+    # Predict Y1 and Y0 for T Learner
   } else if (type == "t_learner") {
     if (mode == "classification") {
       y1 <- predict(model_fit$model_fit_treated, new_data = treated_data, type = "prob")$.pred_1
@@ -384,6 +406,7 @@
       y1 <- predict(model_fit$model_fit_treated, new_data = treated_data)$.pred
       y0 <- predict(model_fit$model_fit_control, new_data = control_data)$.pred
     }
+    # Predict Y1 and Y0 for R Learner
   } else if (type == "r_learner") {
     m_hat <- .predict_meta(counterfactual = counterfactual, model_fit = model_fit, mode = mode, type = "r_learner")
     e_hat <- .propensity(treatment = treatment, data = original_data, outcome_name = outcome_name)
@@ -391,6 +414,17 @@
     second_stage <- .second_stage(data = data_resid, m_hat = m_hat, type = "r_learner")
     y1 <- second_stage$y1
     y0 <- second_stage$y0
+    # Predict Y1 and Y0 for DR Learner
+  }else if (type == "dr_learner") {
+    m_hat <- .predict_meta(counterfactual = counterfactual, model_fit = model_fit, mode = mode, type = "dr_learner")
+    e_hat <- .propensity(treatment = treatment, data = original_data, outcome_name = outcome_name)
+    data_resid <- .residualization(data = original_data, m_hat = m_hat, e_hat = e_hat, type = "dr_learner", outcome_name = outcome_name, treatment = treatment)
+    second_stage <- .second_stage(data = data_resid, m_hat = m_hat, type = "dr_learner")
+    y1 <- second_stage$y1
+    y0 <- second_stage$y0
+    # "Not implemented"
+  }else{
+    stop("Not implemented")
   }
 
   # Calculate measures
@@ -669,30 +703,38 @@
   if (type == "r_learner") {
     data_resid <- data %>%
       mutate(
-        Y_tilda = {
-          outcome_name
-        } - m_hat, # residualized outcome
-        A_tilda = treatment - e_hat # residualized treatment
+        Y_tilda = .data[[outcome_name]] - m_hat, # residualized outcome
+        A_tilda = .data[[treatment]] - e_hat # residualized treatment
       )
-
-    # Return data_resid
-    return(data_resid)
+    # Residualization for the DR learner Compute DR Scores
+  } else if (type == "dr_learner") {
+    data_resid <- data %>%
+      mutate(
+        dr_score = ((.data[[treatment]] - e_hat) /
+                      (e_hat * (1 - e_hat))) *
+          (.data[[outcome_name]] - m_hat$m_hat) +
+          (m_hat$y1 - m_hat$y0)
+      )
   }
+  # Return data_resid
+  return(data_resid)
 }
 
 # Function to make a second stage regression models for predictions
-.second_stage <- function(data, type, m_hat) {
+.second_stage <- function(data, type, m_hat,outcome,treatment) {
+  # RF Specification
+  rf_spec <- rand_forest(trees = 500) %>%
+    set_mode("regression") %>%
+    set_engine("ranger")
+
   # Build Second Stage prediction models using Random Forest for R learner
   if (type == "r_learner") {
     # Recipe
     recipe <- recipe(Y_tilde ~ A_tilde + ., data = data) %>%
+      # Remove the original treatment and outcome columns
+      step_rm(treatment,outcome)
       # Add interaction terms
       step_interact(terms = ~ A_tilde:all_predictors())
-
-    # RF Specification
-    rf_spec <- rand_forest(trees = 500) %>%
-      set_mode("regression") %>%
-      set_engine("ranger")
 
     # RF Workflow
     rf_wf <- workflow() %>%
@@ -701,13 +743,29 @@
 
     # Predict residual outcome
     tau <- predict(rf_wf, new_data = data) %>% pull(.pred)
+    # Reconstruct counterfactual outcomes
     y1 <- m_hat + tau
     y0 <- m_hat
+    # Build Second Stage prediction models DR learner
+  }else if (type == "dr_learner") {
+    # Recipe
+    recipe <- recipe(dr_score ~ ., data = data) %>%
+      # Remove the original treatment and outcome columns
+      step_rm(treatment,outcome)
+    # RF Workflow
+    rf_wf <- workflow() %>%
+      add_model(rf_spec) %>%
+      add_recipe(recipe)
 
-    # Return the residuals outcomes for effect measure calculations
-    return(list(
-      y1 = y1,
-      y0 = y0
-    ))
+    # Predict residual outcome
+    tau <- predict(rf_wf, new_data = data) %>% pull(.pred)
+    # Reconstruct counterfactual outcomes
+    y1 <- m_hat$m_hat + tau
+    y0 <- m_hat$m_hat
   }
+  # Return the residuals outcomes for effect measure calculations
+  return(list(
+    y1 = y1,
+    y0 = y0
+  ))
 }
