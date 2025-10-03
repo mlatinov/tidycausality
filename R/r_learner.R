@@ -196,11 +196,6 @@ r_learner <- function(
       )
     }
   }
-  # Policy Implementation
-  if (policy) {
-    # Greedy policy
-    policy_details <- .greedy_policy(tau = effect_measures$ITE)
-  }
   # Object structure
   structure(
     list(
@@ -211,8 +206,16 @@ r_learner <- function(
       effect_measures = effect_measures,
       effect_measures_boots = if (bootstrap) effect_measures_boots else NULL,
       stability_measures = if (stability) stability_measures else NULL,
-      modeling_results = if ("tune()" %in% tune_params) workflow_final$modeling_results else NULL,
-      policy_details = if (policy) policy_details else NULL
+      evaluation_metrics = list(
+        model_performance = if (!is.null(workflow_final$model_performance)) {
+          list(
+            all_tune_results = workflow_final$model_performance$all_tune_results,
+            best_parameters = workflow_final$model_performance$best_result,
+            top_configurations =  workflow_final$model_performance$top_configurations,
+            detailed_metrics = workflow_final$model_performance$detailed_metrics
+          )
+        } else NULL,
+      ),
     ),
     class = c("r_learner", "causal_learner")
   )
