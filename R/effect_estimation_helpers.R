@@ -82,6 +82,7 @@
     att_all <- sapply(effect_list, function(x) x$ATT)
     atc_all <- sapply(effect_list, function(x) x$ATC)
     rd_all <- sapply(effect_list, function(x) x$RD)
+    or_all <- sapply(effect_list, function(x) x$OR)
     rr_all <- sapply(effect_list, function(x) x$RR)
     nnt_all <- sapply(effect_list, function(x) x$NNT)
     pns_all <- sapply(effect_list, function(x) x$PNS)
@@ -128,6 +129,10 @@
       RR_star = c(
         mean(rr_star_all, na.rm = TRUE),
         ci(rr_star_all, alpha)
+      ),
+      OR = c(
+        mean(or_all, na.rm = TRUE),
+        ci(or_all , alpha)
       )
     ))
   } else {
@@ -142,7 +147,6 @@
     return(list(
       y1 = t(apply(y1_all, 1, ci)),
       y0 = t(apply(y0_all, 1, ci)),
-      ite = t(apply(ite_all, 1, ci)),
       ITE = t(apply(ite_all, 1, ci)),
       ATE = c(
         mean(ate_all, na.rm = TRUE),
@@ -159,4 +163,27 @@
     ))
   }
 }
+
+#' Internal helper for calculation uplift effects measures based ITE
+#' @keywords internal
+.calculate_uplift_metrics <- function(ite_estimates, treatment, outcome) {
+
+
+
+
+
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
 
