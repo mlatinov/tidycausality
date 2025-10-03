@@ -92,8 +92,6 @@
   base_spec <- tryCatch(
     {
       spec <- hardhat::extract_spec_parsnip(workflow_base)
-
-      # Check if extraction was successful
       if (is.null(spec)) {
         stop("Failed to extract model specification - workflow may not have a model")
       }
@@ -108,7 +106,6 @@
   fixed_params <- list()
   tuning_params <- list()
 
-  # Loop over parameters and classify fixed vs tuning
   for (param in names(params_to_use)) {
     if (inherits(params_to_use[[param]], "tune") ||
         (is.call(params_to_use[[param]]) && as.character(params_to_use[[param]][[1]]) == "tune")) {
@@ -124,7 +121,7 @@
       workflows::update_model(parsnip::set_args(base_spec, !!!fixed_params))
   }
 
-  # If no tuning parameters, return early
+  # If no tuning parameters, return
   if (length(tuning_params) == 0) {
     return(list(workflow = workflow_base))
   }
@@ -147,7 +144,7 @@
     }
   }
 
-  # Prepare parameter set for tuning with error handling
+  # Prepare parameter set for tuning
   param_set <- tryCatch(
     {
       hardhat::extract_parameter_set_dials(workflow_base) %>%
@@ -176,38 +173,69 @@
 
   # Optional Bayesian optimization
   if (optimize) {
+    # Get metric name  from the tuning results
+    metric_name <- unique(tuned_result$.metrics[[1]]$.metric)[1]
+
     tuned_result <- tryCatch(
       {
         tune::tune_bayes(
-          workflow_base,
+          workflow_base,  # Use original workflow with tuning parameters
           resamples = resamples,
-          parameters = param_set,
-          initial = tuned_result,
-          iter = 100,
+          param_info = param_set,  # Use the original parameter set
+          initial = tuned_result,  # Use grid results as initial
+          iter = 10,
           metrics = metrics,
-          control = tune::control_bayes(no_improve = 20, save_pred = TRUE)
+          control = tune::control_bayes(no_improve = 5, save_pred = TRUE)
         )
       },
       error = function(e) {
-        stop("Bayesian optimization failed: ", e$message)
+        warning("Bayesian optimization failed: ", e$message)
+        return(tuned_result)  # Return grid results as fallback
       }
     )
   }
-
-  # Finalize workflow
-  best_result <- tune::select_best(tuned_result)
+  # Finalize workflow with best parameters
+  metric_name <- unique(tuned_result$.metrics[[1]]$.metric)[1]
   workflow_final <- tune::finalize_workflow(workflow_base, best_result)
 
-  # Return everything
+  # Tuning diagnostics
+  best_result <- tune::select_best(tuned_result, metric = metric_name)
+  all_tune_results <- tune::collect_predictions(tuned_result)
+  top_configurations <- tune::show_best(tuned_result, metric = metric_name, n = 5)
+  detailed_metrics = tune::collect_metrics(tuned_result, summarize = FALSE)
+
+  # Check parameters
+  final_spec <- hardhat::extract_spec_parsnip(workflow_final)
+  final_args <- final_spec$args
+
+  # Verify all tuning parameters have actual values
+  for (param in names(tuning_params)) {
+    param_value <- final_args[[param]]
+
+    # Check if it's still a tune object
+    if (inherits(param_value, "tune")) {
+      stop(sprintf("Parameter %s is still a tune object after finalization", param))
+    }
+
+    # Check if it's a quosure with tune
+    if (rlang::is_quosure(param_value)) {
+      expr <- rlang::quo_get_expr(param_value)
+      if (is.call(expr) && as.character(expr[[1]]) == "tune") {
+        stop(sprintf("Parameter %s is still a tune object after finalization", param))
+      }
+    }
+  }
+  # Return Final Workflow and tuning diagnostics
   return(list(
     workflow = workflow_final,
-    modeling_results = list(
+    model_performance  = list(
       best_result = best_result,
-      tune_metrics = tune::collect_metrics(tuned_result)
+      all_tune_results = all_tune_results,
+      top_configurations = top_configurations,
+      detailed_metrics = detailed_metrics
     )
   ))
 }
-
 #' Function to replicate a recipe steps on new recipe
 #' @keywords internal
 .replicate_recipe <- function(recipe, data) {
