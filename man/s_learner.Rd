@@ -307,10 +307,10 @@ These measures interpret treatment effects on the probability scale.
 }
 
 \item \strong{Probability of Necessity and Sufficiency (PNS)}:
-\deqn{PN = P(Y(T=0)=0 \mid Y=1, T=1)}
+\deqn{PNS = P(Y(T=1)=1, Y(T=0)=0)}
 \itemize{
-\item \strong{Interpretation} Probability that the outcome would not have occurred without treatment, given it occurred with treatment.
-\item \strong{Context}  Useful for attributing outcomes in legal or clinical causality assessments.
+\item \strong{Interpretation}: Probability that treatment is both necessary and sufficient for the outcome.
+\item \strong{Context}: Useful for strong causal attribution; requires assumptions like monotonicity and no unmeasured confounding.
 }
 
 \strong{5. Model Stability Metrics}
@@ -408,40 +408,6 @@ where:
 \itemize{
 \item Univariate (based only on predicted ITEs)
 \item May not capture complex interactions between covariates
-}
-}
-
-\subsection{Policy Tree (\code{policy_method = "tree"})}{
-Learns a multivariate decision tree (via \code{policytree::policy_tree()}) that assigns treatment based directly on covariates \(X\), not just predicted ITEs.
-
-\strong{Key features:}
-\itemize{
-\item \strong{Multivariate:} Uses the full covariate matrix \(X\) for decision making
-\item \strong{Interpretable:} Produces rules like "Treat if age > 50 AND biomarker < 200"
-\item \strong{Non-parametric:} Can capture complex interaction effects
-\item \strong{Optimal:} Finds the treatment assignment policy that maximizes the sum of predicted treatment effects
-}
-
-\strong{Advantages:}
-\itemize{
-\item Discovers complex, interpretable decision rules
-\item More robust to model misspecification of ITEs
-\item Can identify subgroups that benefit most from treatment
-}
-
-\strong{Limitations:}
-\itemize{
-\item More computationally intensive
-\item Requires larger sample sizes for stable tree estimation
-\tree interpretation becomes more complex with deeper trees
-}
-
-\strong{Example rules:}
-\itemize{
-\item "Treat patients with BMI > 30 and HbA1c > 7.0"
-\item "Treat individuals aged 40-65 with high cholesterol"
-\item "No treatment for patients under 18 or over 80"
-}
 }
 
 \dontrun{
