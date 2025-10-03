@@ -86,13 +86,27 @@
   # Return data_resid
   return(data_resid)
 }
+
+#' Function to apply Residualization for X  leaner
+#' @keywords internal
+.x_residualization <- function(data, m_hat, outcome_name, treatment){
+  data_resid <- data %>%
+    mutate(
+      D1 = ifelse(.data[[treatment]] == 1, .data[[outcome_name]] - m_hat$y1, NA),  # treated units
+      D0 = ifelse(.data[[treatment]] == 0, m_hat$y0 - .data[[outcome]], NA)        # control units
+    )
+  # Return data_resid
+  return(data_resid)
+}
+
 # Dispatch Table for Residualization
 .dispatch_table_residualization <- list(
   "dr_learner" = .dr_residualization,
   "r_learner" = .r_residualization,
   "tsri_learner" = .tsri_residualization,
   "u_learner" = .u_residualization,
-  "rx_learner" = .rx_residualization
+  "rx_learner" = .rx_residualization,
+  "x_learner" = .x_residualization
 )
 
 #' Function to apply Residualization for every model that needed it
@@ -213,12 +227,50 @@
     y0 = y0
   ))
 }
+
+#' Function for second stage predictions with X learner
+#' @keywords internal
+.x_second_stage <- function(rf_spec,data,m_hat,treatment){
+
+  # Recipe
+  recipe_tau1 <- recipe(D1 ~ ., data = data %>% filter(!!sym(treatment) == 1)) %>%
+    step_rm(treatment, D0)
+
+  recipe_tau0 <- recipe(D0 ~ ., data = data %>% filter(!!sym(treatment) == 0)) %>%
+    step_rm(treatment, D1)
+
+  # RF Workflow
+  rf_wf_1 <- workflow() %>%
+    add_model(rf_spec) %>%
+    add_recipe(recipe_tau1) %>%
+    fit(data = data %>% filter(!!sym(treatment) == 1))
+
+  rf_wf_0 <- workflow() %>%
+    add_model(rf_spec) %>%
+    add_recipe(recipe_tau0) %>%
+    fit(data = data %>% filter(!!sym(treatment) == 0))
+
+  # Predict residual outcome
+  y1 <- predict(tau1_fit, new_data = data)$.pred
+  y0 <- predict(tau0_fit, new_data = data)$.pred
+
+  # Compute tau
+  tau <- (1 - m_hat) * y1 + m_hat * y0
+
+  # Reconstruct counterfactual outcomes
+  return(list(
+    y1 = y1 + tau,
+    y0 = y0
+  ))
+}
+
 # Dispatch Table for Second stage predictions models
 .dispatch_table_second_stage <- list(
   "dr_learner" = .dr_second_stage,
   "r_learner" = .r_second_stage,
   "u_learner" = .u_second_stage,
-  "rx_learner" = .rx_second_stage
+  "rx_learner" = .rx_second_stage,
+  "x_learner" = .x_second_stage
 )
 
 #'  Function to make a second stage regression models for predictions
