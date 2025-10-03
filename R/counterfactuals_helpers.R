@@ -28,12 +28,13 @@
   ))
 }
 
+#### S Learner ####
 #' Internal helper for S-learner clasification prediction
 #' @keywords internal
 .s_learner_clasification_predict <- function(model_fit,counterfactual){
   # Predict prob on the counterfactual data
-  y1 <- predict(model_fit, new_data = counterfactuals$treated_data, type = "prob")$.pred_1
-  y0 <- predict(model_fit, new_data = counterfactuals$control_data, type = "prob")$.pred_1
+  y1 <- predict(model_fit, new_data = counterfactual$treated_data, type = "prob")$.pred_1
+  y0 <- predict(model_fit, new_data = counterfactual$control_data, type = "prob")$.pred_1
 
   # Return a list with Y1 and Y0 predictions
   return(list(
@@ -46,8 +47,8 @@
 #' @keywords internal
 .s_learner_regression_predict <- function(model_fit,counterfactual){
   # Predict on the counterfactual data
-  y1 <- predict(model_fit, new_data = counterfactuals$treated_data)$.pred
-  y0 <- predict(model_fit, new_data = counterfactuals$control_data)$.pred
+  y1 <- predict(model_fit, new_data = counterfactual$treated_data)$.pred
+  y0 <- predict(model_fit, new_data = counterfactual$control_data)$.pred
 
   # Return a list with Y1 and Y0 predictions
   return(list(
@@ -56,6 +57,7 @@
   ))
 }
 
+#### T Learner ####
 #' Internal helper for T-learner classification prediction
 #' @keywords internal
 .t_learner_classification_predict <- function(model_fit,counterfactual){
@@ -74,8 +76,8 @@
 #' @keywords internal
 .t_learner_regression_predict <- function(model_fit,counterfactual){
   # Predict on the original data
-  y1 <- predict(model_fit$model_fit_treated, new_data = counterfactuals$original_data)$.pred
-  y0 <- predict(model_fit$model_fit_control, new_data = counterfactuals$original_data)$.pred
+  y1 <- predict(model_fit$model_fit_treated, new_data = counterfactual$original_data)$.pred
+  y0 <- predict(model_fit$model_fit_control, new_data = counterfactual$original_data)$.pred
 
   # Return a list with Y1 and Y0 predictions
   return(list(
@@ -84,9 +86,10 @@
   ))
 }
 
+#### R Learner ####
 #' Internal helper for R-learner classification prediction
 #' @keywords internal
-.r_learner_classification_predict <- function(model_fit,counterfactuals){
+.r_learner_classification_predict <- function(model_fit,counterfactual){
   # Predict on the original data
   pred <- predict(model_fit, new_data = original_data, type = "prob")$.pred_1
   # Return first stage predictions
@@ -95,21 +98,23 @@
 
 #' Internal helper for R-learner regression prediction
 #' @keywords internal
-.r_learner_regression_predict <- function(model_fit,counterfactuals){
+.r_learner_regression_predict <- function(model_fit,counterfactual){
   # Predict on the original data
-  pred <- predict(model_fit, new_data = counterfactuals$original_data)
+  pred <- predict(model_fit, new_data = counterfactual$original_data)
   # Return first stage predictions
   return(pred)
 }
 
+#### DR Learner ####
+
 #' Internal helper for DR-learner classification prediction
 #' @keywords internal
-.dr_learner_classification_predict <- function(model_fit,counterfactuals){
+.dr_learner_classification_predict <- function(model_fit,counterfactual){
   # Predict prob on the counterfactual data
-  y1 <- predict(model_fit, new_data = counterfactuals$treated_data, type = "prob")$.pred_1
-  y0 <- predict(model_fit, new_data = counterfactuals$control_data, type = "prob")$.pred_1
+  y1 <- predict(model_fit, new_data = counterfactual$treated_data, type = "prob")$.pred_1
+  y0 <- predict(model_fit, new_data = counterfactual$control_data, type = "prob")$.pred_1
   # Predict prob on the original data
-  m_hat <- predict(model_fit, new_data = counterfactuals$original_data, type = "prob")$.pred_1
+  m_hat <- predict(model_fit, new_data = counterfactual$original_data, type = "prob")$.pred_1
 
   # Return Y1 Y0 and m_hat for later calculation of DR scores
   return(list(
@@ -121,12 +126,12 @@
 
 #' Internal helper for DR-learner for regression  prediction
 #' @keywords internal
-.dr_learner_regression_predict <- function(model_fit,counterfactuals){
+.dr_learner_regression_predict <- function(model_fit,counterfactual){
   # Predict prob on the counterfactual data
-  y1 <- predict(model_fit, new_data = counterfactuals$treated_data)$.pred
-  y0 <- predict(model_fit, new_data = counterfactuals$control_data)$.pred
+  y1 <- predict(model_fit, new_data = counterfactual$treated_data)$.pred
+  y0 <- predict(model_fit, new_data = counterfactual$control_data)$.pred
   # Predict prob on the original data
-  m_hat <- predict(model_fit, new_data = counterfactuals$original_data)$.pred
+  m_hat <- predict(model_fit, new_data = counterfactual$original_data)$.pred
 
   # Return Y1 Y0 and m_hat for later calculation of DR scores
   return(list(
@@ -136,14 +141,16 @@
   ))
 }
 
+#### U Learner ####
+
 #' Internal helper for U-learner regression prediction
 #' @keywords internal
-.u_learner_regression_predict <- function(model_fit,counterfactuals){
+.u_learner_regression_predict <- function(model_fit,counterfactual){
   # Predict  on the counterfactual data
-  y1 <- predict(model_fit, new_data = counterfactuals$treated_data)$.pred
-  y0 <- predict(model_fit, new_data = counterfactuals$control_data)$.pred
+  y1 <- predict(model_fit, new_data = counterfactual$treated_data)$.pred
+  y0 <- predict(model_fit, new_data = counterfactual$control_data)$.pred
   # Predict prob on the original data
-  m_hat <- predict(model_fit, new_data = counterfactuals$original_data)$.pred
+  m_hat <- predict(model_fit, new_data = counterfactual$original_data)$.pred
   # Return Y1 Y0 and m_hat for later calculation of U scores
   return(list(
     y1 = y1,
@@ -154,12 +161,12 @@
 
 #' Internal helper for U-learner classification prediction
 #' @keywords internal
-.u_learner_classification_predict <- function(model_fit,counterfactuals){
+.u_learner_classification_predict <- function(model_fit,counterfactual){
   # Predict prob on the counterfactual data
-  y1 <- predict(model_fit, new_data = counterfactuals$treated_data, type = "prob")$.pred_1
-  y0 <- predict(model_fit, new_data = counterfactuals$control_data, type = "prob")$.pred_1
+  y1 <- predict(model_fit, new_data = counterfactual$treated_data, type = "prob")$.pred_1
+  y0 <- predict(model_fit, new_data = counterfactual$control_data, type = "prob")$.pred_1
   # Predict prob on the original data
-  m_hat <- predict(model_fit, new_data = counterfactuals$original_data, type = "prob")$.pred_1
+  m_hat <- predict(model_fit, new_data = counterfactual$original_data, type = "prob")$.pred_1
 
   # Return Y1 Y0 and m_hat for later calculation of U scores
   return(list(
@@ -169,15 +176,17 @@
   ))
 }
 
-#' Internal helper for DR-learner regression prediction
+#### RX Learner ####
+
+#' Internal helper for RX-learner classification prediction
 #' @keywords internal
-.u_learner_regression_predict <- function(model_fit,counterfactuals){
+.rx_learner_classification_predict <- function(model_fit,counterfactual){
   # Predict  on the counterfactual data
-  y1 <- predict(model_fit, new_data = counterfactuals$treated_data)$.pred
-  y0 <- predict(model_fit, new_data = counterfactuals$control_data)$.pred
+  y1 <- predict(model_fit, new_data = counterfactual$treated_data,type = "prob")$.pred_1
+  y0 <- predict(model_fit, new_data = counterfactual$control_data,type = "prob")$.pred_1
   # Predict prob on the original data
-  m_hat <- predict(model_fit, new_data = counterfactuals$original_data)$.pred
-  # Return Y1 Y0 and m_hat for later calculation of DR scores
+  m_hat <- predict(model_fit, new_data = counterfactual$original_data,type = "prob")$.pred_1
+  # Return Y1 Y0 and m_hat
   return(list(
     y1 = y1,
     y0 = y0,
@@ -185,15 +194,16 @@
   ))
 }
 
-#' Internal helper for U-learner regression prediction
+
+#' Internal helper for RX-learner regression prediction
 #' @keywords internal
-.u_learner_regression_predict <- function(model_fit,counterfactuals){
+.rx_learner_regression_predict <- function(model_fit,counterfactual){
   # Predict  on the counterfactual data
-  y1 <- predict(model_fit, new_data = counterfactuals$treated_data)$.pred
-  y0 <- predict(model_fit, new_data = counterfactuals$control_data)$.pred
+  y1 <- predict(model_fit, new_data = counterfactual$treated_data)$.pred
+  y0 <- predict(model_fit, new_data = counterfactual$control_data)$.pred
   # Predict prob on the original data
-  m_hat <- predict(model_fit, new_data = counterfactuals$original_data)$.pred
-  # Return Y1 Y0 and m_hat for later calculation of U scores
+  m_hat <- predict(model_fit, new_data = counterfactual$original_data)$.pred
+  # Return Y1 Y0 and m_hat
   return(list(
     y1 = y1,
     y0 = y0,
@@ -201,36 +211,31 @@
   ))
 }
 
-#' Internal helper for U-learner classification prediction
+#### X Learner ####
+
+#' Internal helper for X-learner classification prediction
 #' @keywords internal
-.rx_learner_classification_predict <- function(model_fit,counterfactuals){
+.x_learner_classification_predict <- function(model_fit,counterfactual){
   # Predict prob on the counterfactual data
-  y1 <- predict(model_fit, new_data = counterfactuals$treated_data, type = "prob")$.pred_1
-  y0 <- predict(model_fit, new_data = counterfactuals$control_data, type = "prob")$.pred_1
-  # Predict prob on the original data
-  m_hat <- predict(model_fit, new_data = counterfactuals$original_data, type = "prob")$.pred_1
-
-  # Return Y1 Y0 and m_hat for later calculation of U scores
+  y1 <- predict(model_fit$model_fit_1, new_data = counterfactual$original_data, type = "prob")$.pred_1
+  y0 <- predict(model_fit$model_fit_0, new_data = counterfactual$original_data, type = "prob")$.pred_1
+  # Return Y1 Y0  for later calculation of D0 and D1 scores
   return(list(
     y1 = y1,
-    y0 = y0,
-    m_hat = m_hat
+    y0 = y0
   ))
 }
 
-#' Internal helper for DR-learner regression prediction
+#' Internal helper for X-learner regression prediction
 #' @keywords internal
-.rx_learner_regression_predict <- function(model_fit,counterfactuals){
+.x_learner_regression_predict <- function(model_fit,counterfactual){
   # Predict  on the counterfactual data
-  y1 <- predict(model_fit, new_data = counterfactuals$treated_data)$.pred
-  y0 <- predict(model_fit, new_data = counterfactuals$control_data)$.pred
-  # Predict prob on the original data
-  m_hat <- predict(model_fit, new_data = counterfactuals$original_data)$.pred
-  # Return Y1 Y0 and m_hat for later calculation of DR scores
+  y1 <- predict(model_fit, new_data = counterfactual$original_data)$.pred
+  y0 <- predict(model_fit, new_data = counterfactual$original_data)$.pred
+  # Return Y1 Y0  for later calculation of D0 and D1 scores
   return(list(
     y1 = y1,
-    y0 = y0,
-    m_hat = m_hat
+    y0 = y0
   ))
 }
 
@@ -250,6 +255,8 @@
   "rx_learner_regression" = .rx_learner_regression_predict
 )
 
+
+#### predict_meta ()####
 
 #' Internal helper for picking and appying the correct predict function
 #' @keywords internal
