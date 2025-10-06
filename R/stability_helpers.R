@@ -132,7 +132,7 @@
   fun_args <- list(counterfactual = counterfactual, model_fit = model_fit)
 
   # Add extra arguments for R/DR learners
-  if (learner %in% c("r_learner", "dr_learner")) {
+  if (type %in% c("r_learner", "dr_learner")) {
     fun_args$mode <- mode
     fun_args$outcome_name <- outcome_name
     fun_args$treatment <- treatment
