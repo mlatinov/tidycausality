@@ -2,29 +2,31 @@
 #' Function to calculate the benefit when Treating all + Handing the outcome type
 #' @keywords internal
 .benefit_treat <- function(outcome_actual,benefit_per_success = NULL,mode){
-
-  # When outcome is binary the benefit is sums of the outcome when 1
   if (mode == "classification") {
-    if (is.null(benefit_per_success)) {
-      stop("benefit_per_success must be provided")
-    }
-    # Number of successes assuming 1 is success
-    n_successes <- sum(outcome_actual == 1)
-    return(n_successes * benefit_per_success )
-
-    # When outcome is continues The benefit is the sum of the outcome
-  }else{
+    # default benefit per success = 1 if not provided
+    if (is.null(benefit_per_success)) benefit_per_success <- 1
+    n_successes <- sum(outcome_actual == 1, na.rm = TRUE)
+    return(n_successes * benefit_per_success)
+  } else {
+    # continuous outcome: interpret benefit as sum(outcome * weight) if provided
     if (!is.null(benefit_per_success)) {
-      warning("benefit_per_success is not a part from the calculation when the outcome is continues")
+      # if benefit_per_success is a scalar, multiply sum(outcome) by that scalar
+      if (length(benefit_per_success) == 1) {
+        return(sum(outcome_actual, na.rm = TRUE) * benefit_per_success)
+      } else {
+        # if a vector provided, multiply elementwise sum
+        return(sum(outcome_actual * benefit_per_success, na.rm = TRUE))
+      }
+    } else {
+      return(sum(outcome_actual, na.rm = TRUE))
     }
-    return(sum(outcome_actual))
   }
 }
 
 #' Function to calculate baseline policy implementation
 #' @keywords internal
 .calculate_baseline_policy <- function(data, outcome_col, treatment_col, mode,
-                                       cost_per_treatment, benefit_per_success){
+                                       cost_per_treatment, benefit_per_success,random_fraction = 0.5){
 
   # Number of people in the data
   n <- nrow(data)
@@ -43,13 +45,11 @@
   benefit_treat_none <-.benefit_treat(control_outcomes, benefit_per_success, mode)
   net_value_treat_none <- benefit_treat_none - cost_treat_none
 
-  ## Policy 3 : Random treatment (50%)
-  n_50 <- floor(n * 0.5)
-  cost_treat_random <- n_50 * cost_per_treatment
-  # Sample 50 %
-  data_random <- sample_n(data,size = n_50)
-  outcome_random <- data[[outcome_col]]
-  benefit_treat_random <- .benefit_treat(outcome_random, benefit_per_success, mode)
+  ## Policy 3: Random Fraction
+  n_rand <- floor(n * random_fraction)
+  data_random <- dplyr::sample_n(data, size = n_rand)
+  cost_treat_random <- n_rand * cost_per_treatment
+  benefit_treat_random <- .benefit_treat(data_random[[outcome_col]], benefit_per_success, mode)
   net_value_treat_random <- benefit_treat_random - cost_treat_random
 
   # Return
@@ -84,7 +84,7 @@
     if (is.null(cost_per_treatment)) {
       stop("Cost per treatment must be provided when budget constrains is specified")
     }
-    n_treat <- floor(n / cost_per_treatment)
+    n_treat <- floor(budget_constraint / cost_per_treatment)
 
     # Case 2 if we have treatment fraction specified
   }else if (!is.null(treatment_fraction)) {
@@ -120,19 +120,16 @@
 
   # Calculate expected outcomes
   cost_to_treat <- length(treat_index) * cost_per_treatment
-  benefit <- .benefit_treat(outcome_actual = data_sub$outcome,benefit_per_success,mode)
+  benefit <- .benefit_treat(outcome_actual = data_sub[[outcome_col]],benefit_per_success,mode)
   net_value <- benefit - cost_to_treat
 
   # Calculate the ITE threshold
-  ite_threshold <- ite_estimates[treat_index[length(treat_index)]]
-
-  # Calculate baseline comparison
-  baseline <- .calculate_baseline_policy(data, outcome_col, treatment_col,
-                                         cost_per_treatment, benefit_per_success, mode)
+  ite_threshold <- ite_estimates[min(length(treat_index), length(sorted_ite_index))]
 
   # Take the best baseline policy
-  best_baseline <- max(baseline$treat_all$net_value,
-                       baseline$treat_none$net_value)
+  baseline <- .calculate_baseline_policy(data, outcome_col, treatment_col, mode, cost_per_treatment, benefit_per_success)
+  # Calculate baseline comparison
+  best_baseline <- max(baseline$treat_all$net_value, baseline$treat_none$net_value, baseline$treat_random$net_value)
 
   # Comparison between baseline and greedy policy
   incremental_value <- net_value - best_baseline
@@ -143,65 +140,59 @@
       cost = cost_to_treat,
       benefit = benefit,
       net_value = net_value,
-      ite_threshold,
-      incremental_value
+      ite_threshold = ite_threshold,
+      incremental_value = incremental_value
     )
   ))
 }
 
-#' Function for Greedy policy Curve
+#'Internal function: compute total utility (benefit - cost)
 #' @keywords internal
-.calculate_policy_curve <- function(ite_estimates, data, outcome_col, treatment_col,
-                                    cost_per_treatment, benefit_per_success){
-
-
-
-
-
-
-
+.greedy_policy_gain <- function(threshold, ite, outcome, cost = 0, benefit = 1) {
+  policy_vec <- ifelse(ite > threshold, 1, 0)
+  # expected gain using observed outcomes: benefit * outcome - cost
+  total_gain <- sum(policy_vec * (benefit * outcome - cost), na.rm = TRUE)
+  return(total_gain)
 }
 
-#' Function for Greedy policy implementation
+
+#' Greedy policy curve: evaluate thresholds and return best policy info
 #' @keywords internal
-.greedy_policy <- function(tau) {
-  # Greedy policy function to compute gains and policy vec
-  greedy_policy <- function(threshold, tau) {
-    policy_vec <- ifelse(tau > threshold, 1, 0)
-    gain <- sum(tau * policy_vec)
-    return(gain)
-  }
-  # Set 50 thresholds from min to max tau
-  thresholds <- seq(min(tau), max(tau), length.out = 50)
+.calculate_policy_curve <- function(ite_estimates, data, outcome_col, treatment_col = NULL, cost_per_treatment = 0,
+                                    benefit_per_success = 1, n_thresholds = 50 ) {
 
-  # Compute gains for each threshold
-  gains <- sapply(thresholds, greedy_policy, tau = tau)
+  # Subset the data for outcome and create thresholds grid
+  outcome <- data[[outcome_col]]
+  thresholds <- seq(min(ite_estimates, na.rm = TRUE), max(ite_estimates, na.rm = TRUE), length.out = n_thresholds)
 
-  # Find the best threshold and corresponding gain
+  # Calculate the Gain for each threshold
+  gains <- sapply(thresholds, .greedy_policy_gain,
+                  ite = ite_estimates, outcome = outcome,
+                  cost = cost_per_treatment, benefit = benefit_per_success)
+
+  # Find the best threshold and best gain
   best_idx <- which.max(gains)
   best_threshold <- thresholds[best_idx]
   best_gain <- gains[best_idx]
+  policy_vector <- ifelse(ite_estimates > best_threshold, 1, 0)
 
-  # Compute policy vector for the best threshold
-  policy_vector <- ifelse(tau > best_threshold, 1, 0)
+  # Plot the Policy Gain Curve
+  gain_df <- data.frame(threshold = thresholds, gain = gains)
+  gain_plot <- ggplot2::ggplot(gain_df, ggplot2::aes(x = threshold, y = gain)) +
+    ggplot2::geom_line(color = "steelblue", linewidth = 1) +
+    ggplot2::geom_point(aes(x = best_threshold, y = best_gain), color = "red", size = 3) +
+    ggplot2::labs(title = "Greedy Policy Gain Curve",
+                  subtitle = paste0("Best Threshold = ", round(best_threshold, 4),
+                                    " | Gain = ", round(best_gain, 4)),
+                  x = "ITE Threshold", y = "Total Expected Gain") +
+    ggplot2::theme_minimal()
 
-  # Gain Curve
-  gain_df <- data.frame(thresholds = thresholds, gain = gains)
-  gain_plot <- ggplot(gain_df, aes(x = thresholds, y = gain)) +
-    geom_line(color = "steelblue", linewidth = 1) +
-    geom_point(aes(x = best_threshold, y = best_gain), color = "red", size = 3) +
-    labs(
-      title = "Greedy Policy Gain Curve",
-      subtitle =
-        paste0("Best Threshold = ", round(best_threshold, 4), ", Gain = ", round(best_gain, 4)), x = "Threshold", y = "Total Gain"
-    ) +
-    theme_minimal()
-
-  # Output policy details
+  # Return metrics
   return(list(
     best_threshold = best_threshold,
     best_gain = best_gain,
     policy_vector = policy_vector,
-    gain_curve = gain_plot
-  ))
+    gain_curve = gain_plot,
+    gain_table = gain_df
+    ))
 }
