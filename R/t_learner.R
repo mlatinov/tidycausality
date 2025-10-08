@@ -3,7 +3,6 @@
 # Package imports
 #' @import tidymodels
 #' @import tidyverse
-#' @importFrom policytree policy_tree
 #'
 #' @title T-Learner for Causal Treatment Effect Estimation
 #'
@@ -211,8 +210,8 @@ t_learner <- function(
     optimize = optimize
   )
   # Final model fitting
-  model_fit_treated <- fit(workflow_final$workflow, data = data %>% filter(!!sym(treatment) == 1))
-  model_fit_control <- fit(workflow_final$workflow, data = data %>% filter(!!sym(treatment) == 0))
+  model_fit_treated <- parsnip::fit(workflow_final$workflow, data = data %>% filter(!!rlang::sym(treatment) == 1))
+  model_fit_control <- parsnip::fit(workflow_final$workflow, data = data %>% filter(!!rlang::sym(treatment) == 0))
 
   # Create counterfactuals
   counterfactual <- .create_counterfactual(data = data, treatment = treatment)
@@ -273,8 +272,8 @@ t_learner <- function(
         add_recipe(boot_recipe)
 
       # Fit the outcome models on the bootstrap sample.
-      boot_fit_treated <- fit(boot_workflow, data = boot_data %>% filter(!!sym(treatment) == 1))
-      boot_fit_control <- fit(boot_workflow, data = boot_data %>% filter(!!sym(treatment) == 0))
+      boot_fit_treated <- workflow::fit(boot_workflow, data = boot_data %>% filter(!!rlang::sym(treatment) == 1))
+      boot_fit_control <- workflow::fit(boot_workflow, data = boot_data %>% filter(!!rlang::sym(treatment) == 0))
 
       # Predict on the  bootstrap sample Stage
       boot_predict_y1_y0 <- .predict_meta(
@@ -342,8 +341,8 @@ t_learner <- function(
             top_configurations =  workflow_final$model_performance$top_configurations,
             detailed_metrics = workflow_final$model_performance$detailed_metrics
           )
-        } else NULL,
-      ),
+        } else NULL
+      )
     ),
     class = c("t_learner", "causal_learner")
   )

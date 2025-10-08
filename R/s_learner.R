@@ -583,7 +583,7 @@ s_learner <- function(
       base_model = workflow_base$base_spec,
       treatment = treatment,
       data = data,
-      model_fit = model_fit,
+      model_fit = list(model_fit = model_fit),
       effect_measures = effect_measures,
       effect_measures_boots = if (bootstrap) effect_measures_boots else NULL,
       stability_measures = if (stability) stability_measures else NULL,
@@ -595,8 +595,8 @@ s_learner <- function(
             top_configurations =  workflow_final$model_performance$top_configurations,
             detailed_metrics = workflow_final$model_performance$detailed_metrics
             )
-        } else NULL,
-      ),
+        } else NULL
+      )
     ),
     class = c("s_learner", "causal_learner")
   )
