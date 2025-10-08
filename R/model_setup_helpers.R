@@ -196,10 +196,10 @@
   }
   # Finalize workflow with best parameters
   metric_name <- unique(tuned_result$.metrics[[1]]$.metric)[1]
+  best_result <- tune::select_best(tuned_result, metric = metric_name)
   workflow_final <- tune::finalize_workflow(workflow_base, best_result)
 
   # Tuning diagnostics
-  best_result <- tune::select_best(tuned_result, metric = metric_name)
   all_tune_results <- tune::collect_predictions(tuned_result)
   top_configurations <- tune::show_best(tuned_result, metric = metric_name, n = 5)
   detailed_metrics = tune::collect_metrics(tuned_result, summarize = FALSE)
@@ -241,14 +241,14 @@
 .replicate_recipe <- function(recipe, data) {
   # Extract original steps from the input recipe
   original_steps <- recipe$steps
-
+  # Extract recipe outcome name
+  outcome_name <- recipe$var_info %>% filter(role == "outcome") %>% pull(variable)
   # Create new recipe
-  new_recipe <- recipe(outcome ~ ., data = data)
+  new_recipe <- recipes::recipe(as.formula(paste(outcome_name, "~ .")), data = data)
 
   for (step in original_steps) {
-    new_recipe <- new_recipe %>% add_step(step)
+    new_recipe <- add_step(new_recipe, step)
   }
-
   # Return new recipe
   return(new_recipe)
 }
