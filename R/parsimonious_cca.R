@@ -65,5 +65,7 @@ parsimonious_cca <- function(data,treatment,outcome,threshold = 0.3){
     treatment = data[[treatment]],
     outcome   = data[[outcome]]
   )
+  # Return data_reduced
+  return(data_reduced)
 }
 
