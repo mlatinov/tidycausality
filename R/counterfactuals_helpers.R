@@ -62,8 +62,8 @@
 #' @keywords internal
 .t_learner_classification_predict <- function(model_fit,counterfactual){
   # Predict prob on the original  data
-  y1 <- predict(model_fit$model_fit_treated, new_data = counterfactuals$original_data, type = "prob")$.pred_1
-  y0 <- predict(model_fit$model_fit_control, new_data = counterfactuals$original_data, type = "prob")$.pred_1
+  y1 <- predict(model_fit$model_fit_treated, new_data = counterfactual$original_data, type = "prob")$.pred_1
+  y0 <- predict(model_fit$model_fit_control, new_data = counterfactual$original_data, type = "prob")$.pred_1
 
   # Return a list with Y1 and Y0 predictions
   return(list(
