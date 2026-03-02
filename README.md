@@ -81,11 +81,3 @@ Install from GitHub:
 ```r
 remotes::install_github("mlatinov/tidycausality")
 ```
-
-## Contributing
-
-Please open issues or PRs for bug reports and feature requests. Tests live under tests/testthat and we use roxygen2 for documentation.
-
-## License
-
-MIT + file LICENSE
