@@ -1,45 +1,74 @@
 # tidycausality
 
-![tidycausality badge](gRRCfAZU2SQq366ERLH0-aX7uO-adjusted.jpg)
+A tidy, parsnip-based wrapper for causal machine learning learners (S-, T-, X-, R-, U-, DR-, and RX-learners). Provides tidy workflows, tuning, bootstrap inference, and policy evaluation utilities built on top of tidymodels.
 
-**tidycausality** is a development-stage R package for causal machine learning, built for seamless integration with the **tidymodels** ecosystem. It provides a unified, extensible framework for estimating treatment effects using modern ML techniques — starting with **causal forests**.
+## Features
 
----
+- Unified, tidy interface to multiple causal learners (s_learner, t_learner, x_learner, r_learner, u_learner, dr_learner, rx_learner).
+- Integration with parsnip, recipes and workflows for preprocessing, tuning and fitting.
+- Effect estimation (ITE / ATE / ATT / ATC) and classification measures (RR, OR, NNT, etc.).
+- Bootstrap-based confidence intervals and optional stability analysis.
+- Helpers for policy evaluation and simple visualization methods.
 
-## 🔍 What is tidycausality?
+## Installation
 
-`tidycausality` is a **tidy-first**, **modular**, and **extensible** package that:
-
-- Implements causal models using `parsnip`-style specifications.
-- Supports flexible prediction of **heterogeneous treatment effects (CATEs)**.
-- Can integrate with tuning frameworks like `tune`, and feature engineering tools like `recipes`.
-- Aims for **transparent, customizable** modeling workflows for researchers and applied data scientists.
-
----
-## 📦 Models
-
-✅ Implemented Models
-| Model Name      | Engine | Type       | Description                                             |
-| --------------- | ------ | ---------- | ------------------------------------------------------- |
-| `causal_forest` | `grf`  | Regression | Estimates CATEs using generalized random forests (GRF). |
-
-🧪 Planned Models
-| Model Name            | Engine   | Type           | Notes                                                                    |
-| --------------------- | -------- | -------------- | ------------------------------------------------------------------------ |
-| `bart_causal`         | `dbarts` | Regression     | Bayesian Additive Regression Trees for treatment effect estimation.      |
-| `x_learner`           | internal | Meta-learner   | Decomposes effect estimation into separate models for treatment/control. |
-| `t_learner`           | internal | Meta-learner   | Separate models for treatment and control groups.                        |
-| `s_learner`           | internal | Meta-learner   | Single model with treatment as covariate.                                |
-| `dr_learner`          | internal | Doubly robust  | Combines outcome modeling and propensity score modeling.                 |
-| `instrumental_forest` | `grf`    | IV Regression  | For estimating local average treatment effects with instruments.         |
-| `uplift_tree`         | TBD      | Classification | Uplift modeling for binary outcomes and marketing campaigns.             |
-| `causal_boosting`     | TBD      | Regression     | Boosted versions of causal models.                                       |
-| `meta_stack`          | `stacks` | Ensemble       | Stacking multiple causal models.                                         |
-
-
-## 🚀 Installation
+Install the development version from GitHub (requires devtools/remotes):
 
 ```r
-# Development version from GitHub
-# install.packages("devtools")
-devtools::install_github("mlatinov/tidycausality")
+# install.packages("remotes")
+remotes::install_github("mlatinov/tidycausality")
+```
+
+Note: tidycausality depends on the tidymodels ecosystem and several optional packages (grf, bcf, policytree). Install the recommended packages if you plan to use learners that require them.
+
+## Quick start
+
+A minimal example using the S-learner (regression):
+
+```r
+library(tidymodels)
+library(tidycausality)
+
+# synthetic data
+set.seed(1)
+df <- tibble(
+  x1 = rnorm(200),
+  T = rbinom(200, 1, 0.5),
+  Y = 1 + 0.5 * x1 + 0.8 * T + rnorm(200)
+)
+
+rec <- recipe(Y ~ ., data = df) %>% step_normalize(all_numeric_predictors())
+
+# Fit a basic S-learner (uses parsnip workflow internally)
+s_fit <- s_learner(
+  base_model = "random_forest",
+  mode = "regression",
+  data = df,
+  recipe = rec,
+  treatment = "T"
+)
+
+# Inspect effect estimates
+s_fit$effect_measures$ATE
+
+# Summary and plot
+summary(s_fit)
+autoplot(s_fit, type = "density")
+```
+
+## API overview
+
+Primary exported functions:
+- s_learner(), t_learner(), x_learner(), r_learner(), u_learner(), dr_learner(), rx_learner()
+- predict.causal_learner(), summary.causal_learner(), autoplot.causal_learner(), comprehend.causal_learner()
+- calculate_policy_metrics(), parsimonious_cca(), explore_causal(), explain_model()
+
+See the manual pages (?s_learner, ?t_learner, etc.) for full argument lists and examples.
+
+## Contributing
+
+Contributions, bug reports and feature requests are welcome — please open an issue or a pull request. Unit tests are located under `tests/testthat/` and documentation uses roxygen2.
+
+## License
+
+MIT + file LICENSE
