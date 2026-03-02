@@ -11,7 +11,10 @@ Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.3.2
 Imports:
     tidymodels,
-    tidyverse,
+    dplyr,
+    tidyr,
+    purrr,
+    ggplot2,
     grf,
     bcf,
     policytree
