@@ -1,12 +1,5 @@
 #### S-Learner (Single-Learner) for Heterogeneous Treatment Effect Estimation ####
 
-# Package imports
-#' @import tidymodels
-#' @import dplyr
-#' @import tidyr
-#' @import purrr
-#' @import ggplot2
-#'
 #' @title S-Learner for Causal Treatment Effect Estimation
 #'
 #' @description
