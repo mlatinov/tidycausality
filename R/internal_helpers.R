@@ -94,7 +94,7 @@
   data_resid <- data %>%
     mutate(
       D1 = ifelse(.data[[treatment]] == 1, .data[[outcome_name]] - m_hat$y1, NA),  # treated units
-      D0 = ifelse(.data[[treatment]] == 0, m_hat$y0 - .data[[outcome]], NA)        # control units
+      D0 = ifelse(.data[[treatment]] == 0, m_hat$y0 - .data[[outcome_name]], NA)        # control units
     )
   # Return data_resid
   return(data_resid)

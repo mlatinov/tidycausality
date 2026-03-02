@@ -1,12 +1,5 @@
 #### T Learner ####
 
-# Package imports
-#' @import tidymodels
-#' @import dplyr
-#' @import tidyr
-#' @import purrr
-#' @import ggplot2
-#'
 #' @title T-Learner for Causal Treatment Effect Estimation
 #'
 #' @description
