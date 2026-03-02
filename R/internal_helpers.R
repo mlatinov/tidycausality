@@ -3,7 +3,7 @@
 #' @keywords internal
 .propensity <- function(treatment, data, outcome_name) {
   # Propensity recipe without the outcome and treatment as a target
-  prop_recipe <- recipe(as.formula(paste(treatment, "~ .")), data = data) %>% step_rm(all_of(outcome))
+  prop_recipe <- recipe(as.formula(paste(treatment, "~ .")), data = data) %>% step_rm(all_of(outcome_name))
 
   # Propensity model using log regression
   prop_model <- logistic_reg() %>%
@@ -72,6 +72,7 @@
     mutate(
       U = (.data[[outcome_name]] - m_hat) / (.data[[treatment]] - e_hat)
     )
+  return(data_resid)
 }
 
 #' Function to apply Residualization for RX  leaner

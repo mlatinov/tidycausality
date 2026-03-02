@@ -1,3 +1,4 @@
+#' @export
 rx_learner <- function(
     base_model = NULL,
     mode = "regression",

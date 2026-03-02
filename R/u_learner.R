@@ -1,4 +1,5 @@
 
+#' @export
 u_learner <- function(
     base_model = NULL,
     mode = "regression",
