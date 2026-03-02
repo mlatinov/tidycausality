@@ -5,5 +5,8 @@
 #' @docType package
 #' @name tidycausality
 #' @import tidymodels
-#' @import tidyverse
+#' @import dplyr
+#' @import tidyr
+#' @import purrr
+#' @import ggplot2
 NULL

@@ -2,7 +2,10 @@
 
 # Package imports
 #' @import tidymodels
-#' @import tidyverse
+#' @import dplyr
+#' @import tidyr
+#' @import purrr
+#' @import ggplot2
 #'
 #' @title S-Learner for Causal Treatment Effect Estimation
 #'
